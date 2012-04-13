@@ -1,0 +1,8 @@
+.sconsign.dblite
+dbg_x86_32/
+dbg_x86_64/
+opt_x86_32/
+opt_x86_64/
+*.nmf
+*.nexe
+

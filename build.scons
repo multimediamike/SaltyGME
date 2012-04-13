@@ -1,0 +1,63 @@
+#! -*- python -*-
+#
+# Copyright (c) 2011 The Native Client Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import make_nacl_env
+import os
+
+nacl_env = make_nacl_env.NaClEnvironment(
+    nacl_platform=os.getenv('NACL_TARGET_PLATFORM'))
+
+nacl_env.Append(CPPFLAGS=['-Igme-source'])
+
+sources = ['saltygme.c',
+'gme-source/Ay_Apu.cpp',
+'gme-source/Ay_Cpu.cpp',
+'gme-source/Ay_Emu.cpp',
+'gme-source/Blip_Buffer.cpp',
+'gme-source/Classic_Emu.cpp',
+'gme-source/Data_Reader.cpp',
+'gme-source/Dual_Resampler.cpp',
+'gme-source/Effects_Buffer.cpp',
+'gme-source/Fir_Resampler.cpp',
+'gme-source/Gb_Apu.cpp',
+'gme-source/Gb_Cpu.cpp',
+'gme-source/Gb_Oscs.cpp',
+'gme-source/Gbs_Emu.cpp',
+'gme-source/gme.cpp',
+'gme-source/Gme_File.cpp',
+'gme-source/Gym_Emu.cpp',
+'gme-source/Hes_Apu.cpp',
+'gme-source/Hes_Cpu.cpp',
+'gme-source/Hes_Emu.cpp',
+'gme-source/Kss_Cpu.cpp',
+'gme-source/Kss_Emu.cpp',
+'gme-source/Kss_Scc_Apu.cpp',
+'gme-source/M3u_Playlist.cpp',
+'gme-source/Multi_Buffer.cpp',
+'gme-source/Music_Emu.cpp',
+'gme-source/Nes_Apu.cpp',
+'gme-source/Nes_Cpu.cpp',
+'gme-source/Nes_Fme7_Apu.cpp',
+'gme-source/Nes_Namco_Apu.cpp',
+'gme-source/Nes_Oscs.cpp',
+'gme-source/Nes_Vrc6_Apu.cpp',
+'gme-source/Nsfe_Emu.cpp',
+'gme-source/Nsf_Emu.cpp',
+'gme-source/Sap_Apu.cpp',
+'gme-source/Sap_Cpu.cpp',
+'gme-source/Sap_Emu.cpp',
+'gme-source/Sms_Apu.cpp',
+'gme-source/Snes_Spc.cpp',
+'gme-source/Spc_Cpu.cpp',
+'gme-source/Spc_Dsp.cpp',
+'gme-source/Spc_Emu.cpp',
+'gme-source/Vgm_Emu.cpp',
+'gme-source/Vgm_Emu_Impl.cpp',
+'gme-source/Ym2413_Emu.cpp',
+'gme-source/Ym2612_Emu.cpp'
+]
+
+nacl_env.AllNaClModules(sources, 'saltygme')
