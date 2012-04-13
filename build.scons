@@ -13,6 +13,9 @@ nacl_env = make_nacl_env.NaClEnvironment(
 nacl_env.Append(CPPFLAGS=['-Igme-source'])
 
 sources = ['saltygme.c',
+'xz-embedded/xz_crc32.c',
+'xz-embedded/xz_dec_lzma2.c',
+'xz-embedded/xz_dec_stream.c',
 'gme-source/Ay_Apu.cpp',
 'gme-source/Ay_Cpu.cpp',
 'gme-source/Ay_Emu.cpp',
