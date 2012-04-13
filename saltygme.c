@@ -41,6 +41,7 @@ static int g_currentTrack;
 static int g_trackCount = 1;
 static gme_info_t *g_metadata;
 static unsigned char *g_networkBuffer = NULL;
+#define BUFFER_INCREMENT (1024 * 1024)
 static int g_networkBufferSize = 0;
 static int g_networkBufferPtr = 0;
 static int g_isPlaying = 0;
@@ -103,13 +104,25 @@ static void ReadComplete(void* user_data, int32_t result)
 {
   PP_Resource songLoader = (PP_Resource)user_data;
   struct PP_CompletionCallback readCallback = { ReadComplete, (void*)songLoader };
+  void *temp;
 
   printf("ReadComplete(%p, %d)\n", user_data, result);
   
   /* data has been transferred to buffer; check if more is on the way */
   g_networkBufferPtr += result;
-  if (g_networkBufferPtr < g_networkBufferSize)
+  if (result > 0)
   {
+    /* is a bigger buffer needed? */
+    if (g_networkBufferPtr >= g_networkBufferSize)
+    {
+        g_networkBufferSize += BUFFER_INCREMENT;
+        temp = realloc(g_networkBuffer, g_networkBufferSize);
+        if (!temp)
+            printf("Help! memory problem!\n");
+        else
+            g_networkBuffer = temp;
+    }
+
     /* not all the data has arrived yet; read again */
     g_urlloader_if->ReadResponseBody(songLoader,
       &g_networkBuffer[g_networkBufferPtr],
@@ -138,7 +151,8 @@ static void ReadComplete(void* user_data, int32_t result)
       g_metadata->song,
       g_metadata->author);
 
-//    if (g_autoplay)
+g_autoplay = 1;
+    if (g_autoplay)
     {
       g_audio_if->StartPlayback(g_audioHandle);
       g_isPlaying = 1;
@@ -147,35 +161,23 @@ static void ReadComplete(void* user_data, int32_t result)
 }
 
 /* This is called when the Open() call gets header data from server */
-static const char ContentLengthString[] = "Content-Length: ";
+//static const char ContentLengthString[] = "Content-Length: ";
 static void OpenComplete(void* user_data, int32_t result)
 {
   PP_Resource songLoader = (PP_Resource)user_data;
   struct PP_CompletionCallback readCallback = { ReadComplete, (void*)songLoader };
-  struct PP_Var httpHeadersVar;
-  struct PP_Var httpStatus;
-  char *httpHeadersStr = NULL;
 
   printf("OpenComplete(%p, %d)\n", user_data, result);
   /* this probably needs to be more graceful, but this is a good first cut */
   if (result != 0)
     return;
 
-  PP_Resource songResponse = g_urlloader_if->GetResponseInfo(songLoader);
-printf("%s:%s:%d\n", __FILE__, __func__, __LINE__);
-  httpStatus = g_urlresponseinfo_if->GetProperty(songResponse, 
-    PP_URLRESPONSEPROPERTY_STATUSCODE);
-printf("%s:%s:%d, httpStatus is of type %d\n", __FILE__, __func__, __LINE__, httpStatus.type);
-  httpHeadersVar = g_urlresponseinfo_if->GetProperty(songResponse, 
-    PP_URLRESPONSEPROPERTY_HEADERS);
-  httpHeadersStr = AllocateCStrFromVar(httpHeadersVar);
-printf("%s:%s:%d\nvar @ %p\nheaders: %s\n", __FILE__, __func__, __LINE__, httpHeadersVar, httpHeadersStr);
-  g_networkBufferSize = atoi(strstr(httpHeadersStr, ContentLengthString) + 
-    strlen(ContentLengthString));
-  printf("content length = %d\n", g_networkBufferSize);
-
-  g_networkBuffer = (unsigned char*)malloc(g_networkBufferSize);
-printf("%s:%s:%d\n", __FILE__, __func__, __LINE__);
+  if (!g_networkBuffer)
+  {
+    g_networkBufferSize = BUFFER_INCREMENT;
+    g_networkBuffer = (unsigned char*)malloc(g_networkBufferSize);
+  }
+printf("%s:%s:%d, network buffer is %d bytes large\n", __FILE__, __func__, __LINE__, g_networkBufferSize);
   g_urlloader_if->ReadResponseBody(songLoader, 
     g_networkBuffer, g_networkBufferSize, readCallback);
 }
@@ -235,7 +237,6 @@ printf("  time to fetch %s\n", argv[i]);
 
   OpenCallback.func = OpenComplete;
   OpenCallback.user_data = (void*) songLoader;
-printf("%s:%s:%d, opening URL for download (user_data @ %p)\n", __FILE__, __func__, __LINE__, songLoader);
   ret = g_urlloader_if->Open(songLoader, songRequest, OpenCallback);
 if (ret != PP_OK_COMPLETIONPENDING)
   printf("%s:%s:%d, HELP! Open() call failed\n", __FILE__, __func__, __LINE__);
