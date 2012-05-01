@@ -11,6 +11,8 @@
 #include "ppapi/c/ppb.h"
 #include "ppapi/c/ppb_audio.h"
 #include "ppapi/c/ppb_audio_config.h"
+#include "ppapi/c/ppb_graphics_2d.h"
+#include "ppapi/c/ppb_image_data.h"
 #include "ppapi/c/ppb_instance.h"
 #include "ppapi/c/ppb_messaging.h"
 #include "ppapi/c/ppb_url_loader.h"
@@ -25,6 +27,9 @@
 static PP_Module module_id = 0;
 static struct PPB_Audio *g_audio_if = NULL;
 static struct PPB_AudioConfig *g_audioconfig_if = NULL;
+static struct PPB_Graphics2D *g_graphics2d_if = NULL;
+static struct PPB_ImageData *g_imagedata_if = NULL;
+static struct PPB_Instance *g_instance_if = NULL;
 static struct PPB_Messaging *g_messaging_if = NULL;
 static struct PPB_URLLoader *g_urlloader_if = NULL;
 static struct PPB_URLRequestInfo *g_urlrequestinfo_if = NULL;
@@ -48,6 +53,12 @@ static int g_isPlaying = 0;
 static int g_autoplay = 0;
 static PP_Bool g_songLoaded = PP_FALSE;
 int g_voiceCount;
+
+/* graphics */
+#define OSCOPE_WIDTH  512
+#define OSCOPE_HEIGHT 256
+static PP_Resource g_graphics2d;
+static PP_Resource g_oscopeData;
 
 /* functions callable from JS */
 static const char* const kPrevTrackId = "prevTrack";
@@ -114,12 +125,17 @@ static struct PP_Var AllocateVarFromCStr(const char* str) {
   return PP_MakeUndefined();
 }
 
+static void GraphicsFlushCallback(void* user_data, int32_t result)
+{
+}
+
 static void ReadCallback(void* user_data, int32_t result)
 {
   PP_Resource songLoader = (PP_Resource)user_data;
   struct PP_CompletionCallback readCallback = { ReadCallback, (void*)songLoader };
   void *temp;
   struct PP_Var var_result;
+  struct PP_Size graphics_size;
 
   printf("ReadCallback(%p, %d)\n", user_data, result);
   
@@ -171,6 +187,29 @@ static void ReadCallback(void* user_data, int32_t result)
       g_metadata->song,
       g_metadata->author);
 
+    /* initialize the graphics */
+    graphics_size.width = OSCOPE_WIDTH;
+    graphics_size.height = OSCOPE_HEIGHT;
+    g_graphics2d = g_graphics2d_if->Create(g_instance, &graphics_size, PP_TRUE);
+    g_instance_if->BindGraphics(g_instance, g_graphics2d);
+
+    g_oscopeData = g_imagedata_if->Create(
+      g_instance,
+      g_imagedata_if->GetNativeImageDataFormat(),
+      &graphics_size,
+      PP_TRUE
+    );
+{
+  int i;
+  uint32_t *pixels = g_imagedata_if->Map(g_oscopeData);
+  struct PP_CompletionCallback flushCallback = { GraphicsFlushCallback, (void*)songLoader };
+
+  pixels += 128 * OSCOPE_WIDTH;
+  for (i = 0; i < OSCOPE_WIDTH; i++)
+    *pixels++ = 0xFFFFFFFF;
+  g_graphics2d_if->ReplaceContents(g_graphics2d, g_oscopeData);
+  g_graphics2d_if->Flush(g_graphics2d, flushCallback);
+}
     if (g_autoplay)
     {
       g_audio_if->StartPlayback(g_audioHandle);
@@ -457,6 +496,12 @@ printf("*** %s:%s:%d\n", __FILE__, __func__, __LINE__);
       (struct PPB_Audio*)(get_browser_interface(PPB_AUDIO_INTERFACE));
   g_audioconfig_if =
       (struct PPB_AudioConfig*)(get_browser_interface(PPB_AUDIO_CONFIG_INTERFACE));
+  g_graphics2d_if =
+      (struct PPB_Graphics2D*)(get_browser_interface(PPB_GRAPHICS_2D_INTERFACE));
+  g_imagedata_if =
+      (struct PPB_ImageData*)(get_browser_interface(PPB_IMAGEDATA_INTERFACE));
+  g_instance_if =
+      (struct PPB_Instance*)(get_browser_interface(PPB_INSTANCE_INTERFACE));
   g_messaging_if =
       (struct PPB_Messaging*)(get_browser_interface(PPB_MESSAGING_INTERFACE));
   g_urlloader_if =
