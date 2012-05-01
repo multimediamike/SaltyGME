@@ -36,29 +36,87 @@ static struct PPB_URLRequestInfo *g_urlrequestinfo_if = NULL;
 const struct PPB_URLResponseInfo* g_urlresponseinfo_if = NULL;
 static struct PPB_Var* g_var_if = NULL;
 
-/* music playback matters */
-static PP_Resource g_audioConfig;
-static PP_Resource g_audioHandle;
-static int g_sampleCount = 4096;
-#define FREQUENCY 44100
-static Music_Emu *g_emu;
-static int g_currentTrack;
-static int g_trackCount = 1;
-static gme_info_t *g_metadata;
-static unsigned char *g_networkBuffer = NULL;
-#define BUFFER_INCREMENT (1024 * 1024)
-static int g_networkBufferSize = 0;
-static int g_networkBufferPtr = 0;
-static int g_isPlaying = 0;
-static int g_autoplay = 0;
-static PP_Bool g_songLoaded = PP_FALSE;
-int g_voiceCount;
-
-/* graphics */
 #define OSCOPE_WIDTH  512
 #define OSCOPE_HEIGHT 256
-static PP_Resource g_graphics2d;
-static PP_Resource g_oscopeData;
+#define FREQUENCY 44100
+#define MAX_RESULT_STR_LEN 100
+#define BUFFER_INCREMENT (1024 * 1024)
+
+typedef struct
+{
+  /* keeping track of the instance */
+  PP_Instance instance;
+
+  /* network resource */
+  PP_Resource songLoader;
+
+  /* audio playback */
+  PP_Resource audioConfig;
+  PP_Resource audioHandle;
+  int sampleCount;
+  Music_Emu *emu;
+  int currentTrack;
+  int trackCount;
+  gme_info_t *metadata;
+  unsigned char *networkBuffer;
+  int networkBufferSize;
+  int networkBufferPtr;
+  int isPlaying;
+  int autoplay;
+  PP_Bool songLoaded;
+  int voiceCount;
+
+  /* graphics */
+  PP_Resource graphics2d;
+  PP_Resource oscopeData;
+} SaltyGmeContext;
+
+/* for mapping { PP_Instance, SaltyGmeContext } */
+typedef struct
+{
+  PP_Instance instance;
+  SaltyGmeContext context;
+} InstanceContextMap;
+
+#define MAX_INSTANCES 5
+static InstanceContextMap g_instanceContextMap[MAX_INSTANCES];
+static int g_instanceContextMapSize = 0;
+
+static PP_Bool InitContext(PP_Instance instance)
+{
+  InstanceContextMap *mapEntry;
+  SaltyGmeContext *cxt;
+
+  if (g_instanceContextMapSize >= MAX_INSTANCES)
+    return PP_FALSE;
+
+  mapEntry = &g_instanceContextMap[g_instanceContextMapSize++];
+  mapEntry->instance = instance;
+  cxt = &mapEntry->context;
+
+  cxt->sampleCount = 4096;
+  cxt->trackCount = 1;
+  cxt->networkBuffer = NULL;
+  cxt->networkBufferSize = 0;
+  cxt->networkBufferPtr = 0;
+  cxt->isPlaying = 0;
+  cxt->autoplay = 0;
+  cxt->songLoaded = PP_FALSE;
+  cxt->instance = instance;
+
+  return PP_TRUE;
+}
+
+static SaltyGmeContext *GetContext(PP_Instance instance)
+{
+  int i;
+
+  for (i = 0; i < MAX_INSTANCES; i++)
+    if (g_instanceContextMap[i].instance == instance)
+      return &g_instanceContextMap[i].context;
+
+  return NULL;
+}
 
 /* functions callable from JS */
 static const char* const kPrevTrackId = "prevTrack";
@@ -72,14 +130,12 @@ static const char* const kCurrentTrackId = "currentTrack";
 static const char* const kVoiceCountId = "voiceCount";
 static const char* const kVoiceNameId = "voiceName";
 
-/* no way should this be necessary */
-static PP_Instance g_instance;
-
 static void GmeCallback(void* samples, uint32_t num_bytes, void* user_data)
 {
+  SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
   short *short_samples = (short*)(samples);
 
-  gme_play(g_emu, g_sampleCount * 2, short_samples);
+  gme_play(cxt->emu, cxt->sampleCount * 2, short_samples);
 }
 
 /**
@@ -131,8 +187,8 @@ static void GraphicsFlushCallback(void* user_data, int32_t result)
 
 static void ReadCallback(void* user_data, int32_t result)
 {
-  PP_Resource songLoader = (PP_Resource)user_data;
-  struct PP_CompletionCallback readCallback = { ReadCallback, (void*)songLoader };
+  SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
+  struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
   void *temp;
   struct PP_Var var_result;
   struct PP_Size graphics_size;
@@ -140,30 +196,30 @@ static void ReadCallback(void* user_data, int32_t result)
   printf("ReadCallback(%p, %d)\n", user_data, result);
   
   /* data has been transferred to buffer; check if more is on the way */
-  g_networkBufferPtr += result;
+  cxt->networkBufferPtr += result;
   if (result > 0)
   {
     /* is a bigger buffer needed? */
-    if (g_networkBufferPtr >= g_networkBufferSize)
+    if (cxt->networkBufferPtr >= cxt->networkBufferSize)
     {
-        g_networkBufferSize += BUFFER_INCREMENT;
-        temp = realloc(g_networkBuffer, g_networkBufferSize);
+        cxt->networkBufferSize += BUFFER_INCREMENT;
+        temp = realloc(cxt->networkBuffer, cxt->networkBufferSize);
         if (!temp)
             printf("Help! memory problem!\n");
         else
-            g_networkBuffer = temp;
+            cxt->networkBuffer = temp;
     }
 
     /* not all the data has arrived yet; read again */
-    g_urlloader_if->ReadResponseBody(songLoader,
-      &g_networkBuffer[g_networkBufferPtr],
-      g_networkBufferSize - g_networkBufferPtr,
+    g_urlloader_if->ReadResponseBody(cxt->songLoader,
+      &cxt->networkBuffer[cxt->networkBufferPtr],
+      cxt->networkBufferSize - cxt->networkBufferPtr,
       readCallback);
   }
   else
   {
     gme_err_t status;
-    status = gme_open_data(g_networkBuffer, g_networkBufferSize, &g_emu, FREQUENCY);
+    status = gme_open_data(cxt->networkBuffer, cxt->networkBufferSize, &cxt->emu, FREQUENCY);
     if (status)
     {
       /* signal the web page that the load failed */
@@ -172,53 +228,46 @@ static void ReadCallback(void* user_data, int32_t result)
     }
 
     /* song is ready, time to start playback */
-    g_songLoaded = PP_TRUE;
+    cxt->songLoaded = PP_TRUE;
 
-    g_currentTrack = 0;
-    g_trackCount = gme_track_count(g_emu);
-    g_voiceCount = gme_voice_count(g_emu);
-//    g_voiceNames = gme_voice_names(g_emu);
-    status = gme_start_track(g_emu, g_currentTrack);
-    status = gme_track_info(g_emu, &g_metadata, g_currentTrack);
-    printf("%d tracks, %s, %s, %s, %s\n",
-      gme_track_count(g_emu),
-      g_metadata->system,
-      g_metadata->game,
-      g_metadata->song,
-      g_metadata->author);
+    cxt->currentTrack = 0;
+    cxt->trackCount = gme_track_count(cxt->emu);
+    cxt->voiceCount = gme_voice_count(cxt->emu);
+    status = gme_start_track(cxt->emu, cxt->currentTrack);
+    status = gme_track_info(cxt->emu, &cxt->metadata, cxt->currentTrack);
 
     /* initialize the graphics */
     graphics_size.width = OSCOPE_WIDTH;
     graphics_size.height = OSCOPE_HEIGHT;
-    g_graphics2d = g_graphics2d_if->Create(g_instance, &graphics_size, PP_TRUE);
-    g_instance_if->BindGraphics(g_instance, g_graphics2d);
+    cxt->graphics2d = g_graphics2d_if->Create(cxt->instance, &graphics_size, PP_TRUE);
+    g_instance_if->BindGraphics(cxt->instance, cxt->graphics2d);
 
-    g_oscopeData = g_imagedata_if->Create(
-      g_instance,
+    cxt->oscopeData = g_imagedata_if->Create(
+      cxt->instance,
       g_imagedata_if->GetNativeImageDataFormat(),
       &graphics_size,
       PP_TRUE
     );
 {
   int i;
-  uint32_t *pixels = g_imagedata_if->Map(g_oscopeData);
-  struct PP_CompletionCallback flushCallback = { GraphicsFlushCallback, (void*)songLoader };
+  uint32_t *pixels = g_imagedata_if->Map(cxt->oscopeData);
+  struct PP_CompletionCallback flushCallback = { GraphicsFlushCallback, cxt };
 
   pixels += 128 * OSCOPE_WIDTH;
   for (i = 0; i < OSCOPE_WIDTH; i++)
     *pixels++ = 0xFFFFFFFF;
-  g_graphics2d_if->ReplaceContents(g_graphics2d, g_oscopeData);
-  g_graphics2d_if->Flush(g_graphics2d, flushCallback);
+  g_graphics2d_if->ReplaceContents(cxt->graphics2d, cxt->oscopeData);
+  g_graphics2d_if->Flush(cxt->graphics2d, flushCallback);
 }
-    if (g_autoplay)
+    if (cxt->autoplay)
     {
-      g_audio_if->StartPlayback(g_audioHandle);
-      g_isPlaying = 1;
+      g_audio_if->StartPlayback(cxt->audioHandle);
+      cxt->isPlaying = 1;
     }
 
     /* signal the web page that the load was successful */
     var_result = AllocateVarFromCStr("songLoaded:1");
-    g_messaging_if->PostMessage(g_instance, var_result);
+    g_messaging_if->PostMessage(cxt->instance, var_result);
   }
 }
 
@@ -226,22 +275,21 @@ static void ReadCallback(void* user_data, int32_t result)
 //static const char ContentLengthString[] = "Content-Length: ";
 static void OpenComplete(void* user_data, int32_t result)
 {
-  PP_Resource songLoader = (PP_Resource)user_data;
-  struct PP_CompletionCallback readCallback = { ReadCallback, (void*)songLoader };
+  SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
+  struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
 
-  printf("OpenComplete(%p, %d)\n", user_data, result);
   /* this probably needs to be more graceful, but this is a good first cut */
   if (result != 0)
     return;
 
-  if (!g_networkBuffer)
+  if (!cxt->networkBuffer)
   {
-    g_networkBufferSize = BUFFER_INCREMENT;
-    g_networkBuffer = (unsigned char*)malloc(g_networkBufferSize);
+    cxt->networkBufferSize = BUFFER_INCREMENT;
+    cxt->networkBuffer = (unsigned char*)malloc(cxt->networkBufferSize);
   }
 //printf("%s:%s:%d, network buffer is %d bytes large\n", __FILE__, __func__, __LINE__, g_networkBufferSize);
-  g_urlloader_if->ReadResponseBody(songLoader, 
-    g_networkBuffer, g_networkBufferSize, readCallback);
+  g_urlloader_if->ReadResponseBody(cxt->songLoader, 
+    cxt->networkBuffer, cxt->networkBufferSize, readCallback);
 }
 
 /**
@@ -271,52 +319,49 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
                                   const char* argn[],
                                   const char* argv[]) {
   int i;
-  PP_Resource songLoader;
   PP_Resource songRequest;
   struct PP_Var urlProperty;
   struct PP_Var getVar = AllocateVarFromCStr("GET");
   struct PP_CompletionCallback OpenCallback;
   int32_t ret;
+  SaltyGmeContext *cxt;
 
 printf("*** %s:%s:%d: Instance = 0x%X; module_id = 0x%X; %d arguments:\n", __FILE__, __func__, __LINE__, instance, module_id, argc);
 
-  g_instance = instance;
-printf("saving instance -> g_instance (0x%X)\n", g_instance);
+  if (!InitContext(instance))
+    return PP_FALSE;
+  cxt = GetContext(instance);
 
   for (i = 0; i < argc; i++)
   {
-    printf("argn[%d] = %s; argv[%d] = %s\n", i, argn[i], i, argv[i]);
     if (strcmp(argn[i], "songurl") == 0)
-{
-printf("  time to fetch %s\n", argv[i]);
       urlProperty = AllocateVarFromCStr(argv[i]);
-}
     else if (strcmp(argn[i], "autoplay"))
 //      if (atoi(argv[i]))
-        g_autoplay = 1;
+        cxt->autoplay = 1;
   }
 
+  /* prepare audio interface */
+  cxt->sampleCount = g_audioconfig_if->RecommendSampleFrameCount(FREQUENCY, cxt->sampleCount);
+  cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, FREQUENCY, cxt->sampleCount);
+  if (!cxt->audioConfig)
+    return PP_FALSE;
+  cxt->audioHandle = g_audio_if->Create(instance, cxt->audioConfig, GmeCallback, cxt);
+  if (!cxt->audioHandle)
+    return PP_FALSE;
+
   /* obtained song URL; now load it */
-  songLoader = g_urlloader_if->Create(instance);
+  cxt->songLoader = g_urlloader_if->Create(instance);
 
   songRequest = g_urlrequestinfo_if->Create(instance);
   g_urlrequestinfo_if->SetProperty(songRequest, PP_URLREQUESTPROPERTY_URL, urlProperty);
   g_urlrequestinfo_if->SetProperty(songRequest, PP_URLREQUESTPROPERTY_METHOD, getVar);
 
   OpenCallback.func = OpenComplete;
-  OpenCallback.user_data = (void*) songLoader;
-  ret = g_urlloader_if->Open(songLoader, songRequest, OpenCallback);
+  OpenCallback.user_data = cxt;
+  ret = g_urlloader_if->Open(cxt->songLoader, songRequest, OpenCallback);
 if (ret != PP_OK_COMPLETIONPENDING)
   printf("%s:%s:%d, HELP! Open() call failed\n", __FILE__, __func__, __LINE__);
-
-  /* prepare audio interface */
-  g_sampleCount = g_audioconfig_if->RecommendSampleFrameCount(FREQUENCY, g_sampleCount);
-  g_audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, FREQUENCY, g_sampleCount);
-  if (!g_audioConfig)
-    return PP_FALSE;
-  g_audioHandle = g_audio_if->Create(instance, g_audioConfig, GmeCallback, NULL);
-  if (!g_audioHandle)
-    return PP_FALSE;
 
   return PP_TRUE;
 }
@@ -409,34 +454,36 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
 {
   char* message;
   struct PP_Var var_result;
-#define MAX_RESULT_STR_LEN 100
   char result_string[MAX_RESULT_STR_LEN];
+  SaltyGmeContext *cxt;
 
   if (var_message.type != PP_VARTYPE_STRING) {
     /* Only handle string messages */
     return;
   }
 
+  cxt = GetContext(instance);
+
   var_result = PP_MakeUndefined();
   message = AllocateCStrFromVar(var_message);
   if (strncmp(message, kNextTrackId, strlen(kNextTrackId)) == 0)
   {
     printf("next track\n");
-    if (gme_track_count(g_emu) < 1)
+    if (gme_track_count(cxt->emu) < 1)
       return;
-    g_currentTrack = (g_currentTrack + 1) % g_trackCount;
-    gme_start_track(g_emu, g_currentTrack);
-    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", g_currentTrack + 1);
+    cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
+    gme_start_track(cxt->emu, cxt->currentTrack);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", cxt->currentTrack + 1);
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kPrevTrackId, strlen(kPrevTrackId)) == 0)
   {
     printf("previous track\n");
-    if (gme_track_count(g_emu) < 1)
+    if (gme_track_count(cxt->emu) < 1)
       return;
-    g_currentTrack = (g_currentTrack + 1) % g_trackCount;
-    gme_start_track(g_emu, g_currentTrack);
-    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", g_currentTrack + 1);
+    cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
+    gme_start_track(cxt->emu, cxt->currentTrack);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", cxt->currentTrack + 1);
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kStartPlaybackId, strlen(kStartPlaybackId)) == 0)
@@ -450,19 +497,19 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   else if (strncmp(message, kTrackCountId, strlen(kTrackCountId)) == 0)
   {
     printf("getting track count\n");
-    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", g_trackCount);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", cxt->trackCount);
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kCurrentTrackId, strlen(kCurrentTrackId)) == 0)
   {
     printf("getting current track number\n");
-    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", g_currentTrack + 1);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", cxt->currentTrack + 1);
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kVoiceCountId, strlen(kVoiceCountId)) == 0)
   {
-    printf("get voice count (%d)\n", g_voiceCount);
-    snprintf(result_string, MAX_RESULT_STR_LEN, "voiceCount:%d", g_voiceCount);
+    printf("get voice count (%d)\n", cxt->voiceCount);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "voiceCount:%d", cxt->voiceCount);
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kVoiceNameId, strlen(kVoiceNameId)) == 0)
@@ -475,7 +522,7 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   }
   free(message);
 
-  g_messaging_if->PostMessage(g_instance, var_result);
+  g_messaging_if->PostMessage(cxt->instance, var_result);
 }
 
 /**
