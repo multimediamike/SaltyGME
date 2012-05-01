@@ -5,12 +5,36 @@
 
   <script type="text/javascript">
     SaltygmeModule = null;  // Global application object.
-    statusText = 'NO-STATUS';
+    statusText = 'Loading game music...';
+
+    voiceCount = 0;
+    currentTrack = 0;
+    trackCount = 0;
 
     // Indicate load success.
     function moduleDidLoad() {
       SaltygmeModule = document.getElementById('saltygme');
-      updateStatus('SUCCESS');
+      updateStatus('Playing');
+    }
+
+    function prevTrack() {
+      SaltygmeModule.postMessage('prevTrack');
+      updateStatus();
+    }
+
+    function nextTrack() {
+      SaltygmeModule.postMessage('nextTrack');
+      updateStatus();
+    }
+    
+    function toggleSound(play) {
+      if (play == false) {
+        SaltygmeModule.postMessage('stopPlayback');
+        updateStatusField('Paused');
+      } else {
+        SaltygmeModule.postMessage('startPlayback');
+        updateStatusField('Playing track ' + track + ' / ' + g_trackCount);
+      }
     }
 
     // The 'message' event handler.  This handler is fired when the NaCl module
@@ -18,15 +42,47 @@
     // (in C) or pp::Instance.PostMessage() (in C++).  This implementation
     // simply displays the content of the message in an alert panel.
     function handleMessage(message_event) {
-      alert(message_event.data);
+      console.log("handle message: " + message_event.data);
+      if (message_event.data == undefined)
+        return;
+
+      obj = message_event.data.split(':');
+      param = obj[0];
+      value = obj[1];
+      if (param == "songLoaded")
+      {
+        console.log("song loaded = " + value);
+        SaltygmeModule.postMessage('voiceCount');
+        SaltygmeModule.postMessage('currentTrack');
+        SaltygmeModule.postMessage('trackCount');
+      }
+      else if (param == "voiceCount")
+      {
+        console.log("voice count = " + value);
+        voiceCount = value;
+        updateStatus();
+      }
+      else if (param == "currentTrack")
+      {
+        console.log("current track = " + value);
+        currentTrack = value;
+        updateStatus();
+      }
+      else if (param == "trackCount")
+      {
+        console.log("track count = " + value);
+        trackCount = value;
+        updateStatus();
+      }
     }
 
     // If the page loads before the Native Client module loads, then set the
     // status message indicating that the module is still loading.  Otherwise,
     // do not change the status message.
     function pageDidLoad() {
+console.log("pageDidLoad()\n");
       if (SaltygmeModule == null) {
-        updateStatus('LOADING...');
+        updateStatus('Loading game music...');
       } else {
         // It's possible that the Native Client module onload event fired
         // before the page's onload event.  In this case, the status message
@@ -47,6 +103,10 @@
       var statusField = document.getElementById('status_field');
       if (statusField) {
         statusField.innerHTML = statusText;
+      }
+      var metadataField = document.getElementById('metadata_field');
+      if (metadataField && SaltygmeModule) {
+        metadataField.innerHTML = currentTrack + " / " + trackCount + ", " + voiceCount + " voices";
       }
     }
   </script>
@@ -85,12 +145,24 @@
        id="saltygme"
        width=0 height=0
        src="saltygme.nmf"
-       songurl="http://localhost:5103/ducktales.nsfe"
+       autoplay=1
+       songurl="http://10.0.1.104:5103/ducktales.nsfe"
        type="application/x-nacl" />
+
   </div>
+
+<div id="saltygme_controls">
+<button onclick="prevTrack()">&lt;&lt;</button>
+<button onclick="toggleSound(true)">Play</button>
+<button onclick="toggleSound(false)">Pause</button>
+<button onclick="nextTrack()">&gt;&gt;</button>
+</div>
+
+<div id="status_field">Loading song...</div>
+<div id="channels_field"></div>
+<div id="metadata_field"></div>
+
 </p>
 
-<h2>Status</h2>
-<div id="status_field">NO-STATUS</div>
 </body>
 </html>

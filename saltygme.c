@@ -45,10 +45,24 @@ static unsigned char *g_networkBuffer = NULL;
 static int g_networkBufferSize = 0;
 static int g_networkBufferPtr = 0;
 static int g_isPlaying = 0;
-static int g_autoplay = 1;  /* assume autoplay unless explicitly disabled */
+static int g_autoplay = 0;
 static PP_Bool g_songLoaded = PP_FALSE;
-static const char **g_voiceNames = NULL;
 int g_voiceCount;
+
+/* functions callable from JS */
+static const char* const kPrevTrackId = "prevTrack";
+static const char* const kNextTrackId = "nextTrack";
+static const char* const kStartPlaybackId = "startPlayback";
+static const char* const kStopPlaybackId = "stopPlayback";
+
+/* properties that can be queried from JS */
+static const char* const kTrackCountId = "trackCount";
+static const char* const kCurrentTrackId = "currentTrack";
+static const char* const kVoiceCountId = "voiceCount";
+static const char* const kVoiceNameId = "voiceName";
+
+/* no way should this be necessary */
+static PP_Instance g_instance;
 
 static void GmeCallback(void* samples, uint32_t num_bytes, void* user_data)
 {
@@ -100,13 +114,14 @@ static struct PP_Var AllocateVarFromCStr(const char* str) {
   return PP_MakeUndefined();
 }
 
-static void ReadComplete(void* user_data, int32_t result)
+static void ReadCallback(void* user_data, int32_t result)
 {
   PP_Resource songLoader = (PP_Resource)user_data;
-  struct PP_CompletionCallback readCallback = { ReadComplete, (void*)songLoader };
+  struct PP_CompletionCallback readCallback = { ReadCallback, (void*)songLoader };
   void *temp;
+  struct PP_Var var_result;
 
-  printf("ReadComplete(%p, %d)\n", user_data, result);
+  printf("ReadCallback(%p, %d)\n", user_data, result);
   
   /* data has been transferred to buffer; check if more is on the way */
   g_networkBufferPtr += result;
@@ -131,18 +146,23 @@ static void ReadComplete(void* user_data, int32_t result)
   }
   else
   {
+    gme_err_t status;
+    status = gme_open_data(g_networkBuffer, g_networkBufferSize, &g_emu, FREQUENCY);
+    if (status)
+    {
+      /* signal the web page that the load failed */
+      var_result = AllocateVarFromCStr("songLoaded:0");
+      return;
+    }
+
     /* song is ready, time to start playback */
     g_songLoaded = PP_TRUE;
 
-    gme_err_t status;
-#warning need to check error
-    status = gme_open_data(g_networkBuffer, g_networkBufferSize, &g_emu, FREQUENCY);
     g_currentTrack = 0;
     g_trackCount = gme_track_count(g_emu);
     g_voiceCount = gme_voice_count(g_emu);
 //    g_voiceNames = gme_voice_names(g_emu);
     status = gme_start_track(g_emu, g_currentTrack);
-    gme_mute_voice(g_emu, 2, 1);
     status = gme_track_info(g_emu, &g_metadata, g_currentTrack);
     printf("%d tracks, %s, %s, %s, %s\n",
       gme_track_count(g_emu),
@@ -151,12 +171,15 @@ static void ReadComplete(void* user_data, int32_t result)
       g_metadata->song,
       g_metadata->author);
 
-g_autoplay = 1;
     if (g_autoplay)
     {
       g_audio_if->StartPlayback(g_audioHandle);
       g_isPlaying = 1;
     }
+
+    /* signal the web page that the load was successful */
+    var_result = AllocateVarFromCStr("songLoaded:1");
+    g_messaging_if->PostMessage(g_instance, var_result);
   }
 }
 
@@ -165,7 +188,7 @@ g_autoplay = 1;
 static void OpenComplete(void* user_data, int32_t result)
 {
   PP_Resource songLoader = (PP_Resource)user_data;
-  struct PP_CompletionCallback readCallback = { ReadComplete, (void*)songLoader };
+  struct PP_CompletionCallback readCallback = { ReadCallback, (void*)songLoader };
 
   printf("OpenComplete(%p, %d)\n", user_data, result);
   /* this probably needs to be more graceful, but this is a good first cut */
@@ -177,7 +200,7 @@ static void OpenComplete(void* user_data, int32_t result)
     g_networkBufferSize = BUFFER_INCREMENT;
     g_networkBuffer = (unsigned char*)malloc(g_networkBufferSize);
   }
-printf("%s:%s:%d, network buffer is %d bytes large\n", __FILE__, __func__, __LINE__, g_networkBufferSize);
+//printf("%s:%s:%d, network buffer is %d bytes large\n", __FILE__, __func__, __LINE__, g_networkBufferSize);
   g_urlloader_if->ReadResponseBody(songLoader, 
     g_networkBuffer, g_networkBufferSize, readCallback);
 }
@@ -216,16 +239,22 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   struct PP_CompletionCallback OpenCallback;
   int32_t ret;
 
-printf("*** %s:%s:%d - %d arguments:\n", __FILE__, __func__, __LINE__, argc);
+printf("*** %s:%s:%d: Instance = 0x%X; module_id = 0x%X; %d arguments:\n", __FILE__, __func__, __LINE__, instance, module_id, argc);
+
+  g_instance = instance;
+printf("saving instance -> g_instance (0x%X)\n", g_instance);
 
   for (i = 0; i < argc; i++)
   {
-//    printf("argn[%d] = %s; argv[%d] = %s\n", i, argn[i], i, argv[i]);
+    printf("argn[%d] = %s; argv[%d] = %s\n", i, argn[i], i, argv[i]);
     if (strcmp(argn[i], "songurl") == 0)
 {
 printf("  time to fetch %s\n", argv[i]);
       urlProperty = AllocateVarFromCStr(argv[i]);
 }
+    else if (strcmp(argn[i], "autoplay"))
+//      if (atoi(argv[i]))
+        g_autoplay = 1;
   }
 
   /* obtained song URL; now load it */
@@ -337,9 +366,77 @@ printf("*** %s:%s:%d\n", __FILE__, __func__, __LINE__);
  * @param[in] message The contents, copied by value, of the message sent from
  *     browser via postMessage.
  */
-void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message) {
-printf("*** %s:%s:%d\n", __FILE__, __func__, __LINE__);
-  /* TODO(sdk_user): 1. Make this function handle the incoming message. */
+void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
+{
+  char* message;
+  struct PP_Var var_result;
+#define MAX_RESULT_STR_LEN 100
+  char result_string[MAX_RESULT_STR_LEN];
+
+  if (var_message.type != PP_VARTYPE_STRING) {
+    /* Only handle string messages */
+    return;
+  }
+
+  var_result = PP_MakeUndefined();
+  message = AllocateCStrFromVar(var_message);
+  if (strncmp(message, kNextTrackId, strlen(kNextTrackId)) == 0)
+  {
+    printf("next track\n");
+    if (gme_track_count(g_emu) < 1)
+      return;
+    g_currentTrack = (g_currentTrack + 1) % g_trackCount;
+    gme_start_track(g_emu, g_currentTrack);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", g_currentTrack + 1);
+    var_result = AllocateVarFromCStr(result_string);
+  }
+  else if (strncmp(message, kPrevTrackId, strlen(kPrevTrackId)) == 0)
+  {
+    printf("previous track\n");
+    if (gme_track_count(g_emu) < 1)
+      return;
+    g_currentTrack = (g_currentTrack + 1) % g_trackCount;
+    gme_start_track(g_emu, g_currentTrack);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", g_currentTrack + 1);
+    var_result = AllocateVarFromCStr(result_string);
+  }
+  else if (strncmp(message, kStartPlaybackId, strlen(kStartPlaybackId)) == 0)
+  {
+    printf("starting playback\n");
+  }
+  else if (strncmp(message, kStopPlaybackId, strlen(kStopPlaybackId)) == 0)
+  {
+    printf("stopping playback\n");
+  }
+  else if (strncmp(message, kTrackCountId, strlen(kTrackCountId)) == 0)
+  {
+    printf("getting track count\n");
+    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", g_trackCount);
+    var_result = AllocateVarFromCStr(result_string);
+  }
+  else if (strncmp(message, kCurrentTrackId, strlen(kCurrentTrackId)) == 0)
+  {
+    printf("getting current track number\n");
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", g_currentTrack + 1);
+    var_result = AllocateVarFromCStr(result_string);
+  }
+  else if (strncmp(message, kVoiceCountId, strlen(kVoiceCountId)) == 0)
+  {
+    printf("get voice count (%d)\n", g_voiceCount);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "voiceCount:%d", g_voiceCount);
+    var_result = AllocateVarFromCStr(result_string);
+  }
+  else if (strncmp(message, kVoiceNameId, strlen(kVoiceNameId)) == 0)
+  {
+    printf("getting voice name\n");
+  }
+  else
+  {
+    printf("Unhandled message: %s\n", message);
+  }
+  free(message);
+
+  g_messaging_if->PostMessage(g_instance, var_result);
 }
 
 /**
