@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/pp_module.h"
 #include "ppapi/c/pp_var.h"
@@ -40,7 +42,11 @@ static struct PPB_Var* g_var_if = NULL;
 #define OSCOPE_HEIGHT 256
 #define FREQUENCY 44100
 #define MAX_RESULT_STR_LEN 100
-#define BUFFER_INCREMENT (1024 * 1024)
+#define NET_BUFFER_INCREMENT (1024 * 1024)
+#define CHANNELS 2
+
+#define BUFFER_SIZE (FREQUENCY * CHANNELS)
+#define PERIOD_SIZE (BUFFER_SIZE / 10)
 
 typedef struct
 {
@@ -49,6 +55,9 @@ typedef struct
 
   /* network resource */
   PP_Resource songLoader;
+  unsigned char *networkBuffer;
+  int networkBufferSize;
+  int networkBufferPtr;
 
   /* audio playback */
   PP_Resource audioConfig;
@@ -58,9 +67,6 @@ typedef struct
   int currentTrack;
   int trackCount;
   gme_info_t *metadata;
-  unsigned char *networkBuffer;
-  int networkBufferSize;
-  int networkBufferPtr;
   int isPlaying;
   int autoplay;
   PP_Bool songLoaded;
@@ -202,7 +208,7 @@ static void ReadCallback(void* user_data, int32_t result)
     /* is a bigger buffer needed? */
     if (cxt->networkBufferPtr >= cxt->networkBufferSize)
     {
-        cxt->networkBufferSize += BUFFER_INCREMENT;
+        cxt->networkBufferSize += NET_BUFFER_INCREMENT;
         temp = realloc(cxt->networkBuffer, cxt->networkBufferSize);
         if (!temp)
             printf("Help! memory problem!\n");
@@ -284,7 +290,7 @@ static void OpenComplete(void* user_data, int32_t result)
 
   if (!cxt->networkBuffer)
   {
-    cxt->networkBufferSize = BUFFER_INCREMENT;
+    cxt->networkBufferSize = NET_BUFFER_INCREMENT;
     cxt->networkBuffer = (unsigned char*)malloc(cxt->networkBufferSize);
   }
 //printf("%s:%s:%d, network buffer is %d bytes large\n", __FILE__, __func__, __LINE__, g_networkBufferSize);
@@ -325,8 +331,6 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   struct PP_CompletionCallback OpenCallback;
   int32_t ret;
   SaltyGmeContext *cxt;
-
-printf("*** %s:%s:%d: Instance = 0x%X; module_id = 0x%X; %d arguments:\n", __FILE__, __func__, __LINE__, instance, module_id, argc);
 
   if (!InitContext(instance))
     return PP_FALSE;
