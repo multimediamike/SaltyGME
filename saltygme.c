@@ -522,7 +522,9 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
     printf("previous track\n");
     if (gme_track_count(cxt->emu) < 1)
       return;
-    cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
+    cxt->currentTrack = (cxt->currentTrack - 1);
+    if (cxt->currentTrack < 0)
+      cxt->currentTrack = cxt->trackCount - 1;
     gme_start_track(cxt->emu, cxt->currentTrack);
     snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", cxt->currentTrack + 1);
     var_result = AllocateVarFromCStr(result_string);
