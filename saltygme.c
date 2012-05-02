@@ -2,6 +2,7 @@
  * This example demonstrates loading, running and scripting a very simple
  * NaCl module.
  */
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,10 +10,13 @@
 
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/pp_module.h"
+#include "ppapi/c/pp_point.h"
+#include "ppapi/c/pp_size.h"
 #include "ppapi/c/pp_var.h"
 #include "ppapi/c/ppb.h"
 #include "ppapi/c/ppb_audio.h"
 #include "ppapi/c/ppb_audio_config.h"
+#include "ppapi/c/ppb_core.h"
 #include "ppapi/c/ppb_graphics_2d.h"
 #include "ppapi/c/ppb_image_data.h"
 #include "ppapi/c/ppb_instance.h"
@@ -24,20 +28,23 @@
 #include "ppapi/c/ppp.h"
 #include "ppapi/c/ppp_instance.h"
 #include "ppapi/c/ppp_messaging.h"
+
 #include "gme-source/gme.h"
 
 static PP_Module module_id = 0;
 static struct PPB_Audio *g_audio_if = NULL;
 static struct PPB_AudioConfig *g_audioconfig_if = NULL;
+static struct PPB_Core *g_core_if = NULL;
 static struct PPB_Graphics2D *g_graphics2d_if = NULL;
 static struct PPB_ImageData *g_imagedata_if = NULL;
 static struct PPB_Instance *g_instance_if = NULL;
 static struct PPB_Messaging *g_messaging_if = NULL;
 static struct PPB_URLLoader *g_urlloader_if = NULL;
 static struct PPB_URLRequestInfo *g_urlrequestinfo_if = NULL;
-const struct PPB_URLResponseInfo* g_urlresponseinfo_if = NULL;
+static struct PPB_URLResponseInfo* g_urlresponseinfo_if = NULL;
 static struct PPB_Var* g_var_if = NULL;
 
+#define FRAME_RATE 30
 #define OSCOPE_WIDTH  512
 #define OSCOPE_HEIGHT 256
 #define FREQUENCY 44100
@@ -46,12 +53,25 @@ static struct PPB_Var* g_var_if = NULL;
 #define CHANNELS 2
 
 #define BUFFER_SIZE (FREQUENCY * CHANNELS)
-#define PERIOD_SIZE (BUFFER_SIZE / 10)
+#define PERIOD_SIZE (BUFFER_SIZE / 5)
+
+/* functions callable from JS */
+static const char* const kPrevTrackId = "prevTrack";
+static const char* const kNextTrackId = "nextTrack";
+static const char* const kStartPlaybackId = "startPlayback";
+static const char* const kStopPlaybackId = "stopPlayback";
+
+/* properties that can be queried from JS */
+static const char* const kTrackCountId = "trackCount";
+static const char* const kCurrentTrackId = "currentTrack";
+static const char* const kVoiceCountId = "voiceCount";
+static const char* const kVoiceNameId = "voiceName";
 
 typedef struct
 {
-  /* keeping track of the instance */
   PP_Instance instance;
+  uint64_t baseTime;  /* base millisecond clock */
+  pthread_mutex_t audioMutex;
 
   /* network resource */
   PP_Resource songLoader;
@@ -67,14 +87,19 @@ typedef struct
   int currentTrack;
   int trackCount;
   gme_info_t *metadata;
-  int isPlaying;
-  int autoplay;
+  int startPlaying;  /* indicates if the timer callback should start audio */
+  int isPlaying;     /* indicates whether playback is currently occurring */
   PP_Bool songLoaded;
   int voiceCount;
+  short audioBuffer[BUFFER_SIZE];
+  unsigned int audioStart;
+  unsigned int audioEnd;
 
   /* graphics */
   PP_Resource graphics2d;
   PP_Resource oscopeData;
+  uint64_t msToUpdateVideo;
+  int frameCounter;
 } SaltyGmeContext;
 
 /* for mapping { PP_Instance, SaltyGmeContext } */
@@ -106,9 +131,14 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->networkBufferSize = 0;
   cxt->networkBufferPtr = 0;
   cxt->isPlaying = 0;
-  cxt->autoplay = 0;
+  cxt->startPlaying = 0;
   cxt->songLoaded = PP_FALSE;
   cxt->instance = instance;
+  cxt->audioStart = 0;
+  cxt->audioEnd = 0;
+
+  if (pthread_mutex_init(&cxt->audioMutex, NULL) != 0)
+    return PP_FALSE;
 
   return PP_TRUE;
 }
@@ -124,24 +154,69 @@ static SaltyGmeContext *GetContext(PP_Instance instance)
   return NULL;
 }
 
-/* functions callable from JS */
-static const char* const kPrevTrackId = "prevTrack";
-static const char* const kNextTrackId = "nextTrack";
-static const char* const kStartPlaybackId = "startPlayback";
-static const char* const kStopPlaybackId = "stopPlayback";
+void ResetMillisecondsCount(SaltyGmeContext *cxt)
+{
+  struct timeval tv;
 
-/* properties that can be queried from JS */
-static const char* const kTrackCountId = "trackCount";
-static const char* const kCurrentTrackId = "currentTrack";
-static const char* const kVoiceCountId = "voiceCount";
-static const char* const kVoiceNameId = "voiceName";
+  gettimeofday(&tv, NULL);
+  cxt->baseTime = (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+}
 
-static void GmeCallback(void* samples, uint32_t num_bytes, void* user_data)
+uint64_t GetMillisecondsCount(SaltyGmeContext *cxt)
+{
+  struct timeval tv;
+  uint64_t currentMsTime;
+
+  gettimeofday(&tv, NULL);
+  currentMsTime = (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+  return currentMsTime - cxt->baseTime;
+}
+
+static void AudioCallback(void* samples, uint32_t reqLenInBytes, void* user_data)
 {
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
-  short *short_samples = (short*)(samples);
+  int bufferStartInBytes, bufferEndInBytes;
+  int actualLen;
 
-  gme_play(cxt->emu, cxt->sampleCount * 2, short_samples);
+  pthread_mutex_lock(&cxt->audioMutex);
+printf("request for %d bytes; start, end = %d, %d\n", reqLenInBytes, cxt->audioStart, cxt->audioEnd);
+
+  /* if there is no audio ready to feed, leave */
+  if (cxt->audioStart >= cxt->audioEnd)
+  {
+    pthread_mutex_unlock(&cxt->audioMutex);
+    return;
+  }
+
+  bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE) * 2;
+  bufferEndInBytes = (cxt->audioEnd % BUFFER_SIZE ) * 2;
+
+  /* decide how much to feed */
+  if (bufferStartInBytes > bufferEndInBytes)
+    actualLen = BUFFER_SIZE * 2 - bufferStartInBytes;
+  else
+    actualLen = bufferEndInBytes - bufferStartInBytes;
+  if (actualLen > reqLenInBytes)
+    actualLen = reqLenInBytes;
+
+  /* feed it */
+  memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / 2], actualLen);
+  cxt->audioStart += actualLen / 2;
+
+  /* wrap-around case */
+  if (actualLen < reqLenInBytes)
+  {
+printf("wraparound; start, end = %d, %d\n", cxt->audioStart, cxt->audioEnd);
+    samples += actualLen;
+    actualLen = reqLenInBytes - actualLen;
+    bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE) * 2;
+    /* feed it */
+    memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / 2], actualLen);
+    cxt->audioStart += actualLen / 2;
+printf("done with wraparound case\n");
+  }
+
+  pthread_mutex_unlock(&cxt->audioMutex);
 }
 
 /**
@@ -185,10 +260,79 @@ static void GraphicsFlushCallback(void* user_data, int32_t result)
 {
 }
 
+static void TimerCallback(void* user_data, int32_t result)
+{
+  SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
+  struct PP_CompletionCallback timerCallback = { TimerCallback, cxt };
+  struct PP_CompletionCallback flushCallback = { GraphicsFlushCallback, cxt };
+  gme_err_t gmeErr;
+  int i;
+  uint32_t *pixels;
+  uint32_t pixel;
+  struct PP_Point topLeft;
+  short *vizBuffer;
+
+  if (cxt->isPlaying || cxt->startPlaying)
+  {
+    /* check if it's time to generate more audio */
+    pthread_mutex_lock(&cxt->audioMutex);
+    if ((cxt->audioEnd - cxt->audioStart) < (PERIOD_SIZE / 2))
+    {
+printf("Generating more audio; start, end = %d, %d ... ", cxt->audioStart, cxt->audioEnd);
+      gmeErr = gme_play(cxt->emu, PERIOD_SIZE, &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
+      cxt->audioEnd += PERIOD_SIZE;
+printf("%d, %d\n", cxt->audioStart, cxt->audioEnd);
+    }
+    pthread_mutex_unlock(&cxt->audioMutex);
+
+    /* if playback is signaled, start playback and clear the signal */
+    if (cxt->startPlaying)
+    {
+      ResetMillisecondsCount(cxt);
+      cxt->msToUpdateVideo = 0;  /* update video at relative MS tick 0 */
+      g_audio_if->StartPlayback(cxt->audioHandle);
+      cxt->startPlaying = 0;
+      cxt->isPlaying = 1;
+    }
+
+    /* check if it's time to update the visualization */
+    if (GetMillisecondsCount(cxt) >= cxt->msToUpdateVideo)
+    {
+      pixels = g_imagedata_if->Map(cxt->oscopeData);
+      memset(pixels, 0, OSCOPE_WIDTH * OSCOPE_HEIGHT * sizeof(unsigned int));
+      vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
+      pixel = 0xFF00FF00;
+      for (i = 0; i < OSCOPE_WIDTH * CHANNELS; i++)
+      {
+        if (i & 1)  /* right channel data */
+          pixels[OSCOPE_WIDTH * ((192 - (vizBuffer[i] / 512)) - 1) + (i >> 1)] = pixel;
+        else        /* left channel data */
+          pixels[OSCOPE_WIDTH * (64 - (vizBuffer[i] / 512)) + (i >> 1)] = pixel;
+      }
+
+      /* white bar in the middle */
+      pixels = g_imagedata_if->Map(cxt->oscopeData);
+      pixels += OSCOPE_WIDTH * OSCOPE_HEIGHT / 2;
+      for (i = 0; i < OSCOPE_WIDTH; i++)
+        *pixels++ = 0xFFFFFFFF;
+
+      topLeft.x = 0;
+      topLeft.y = 0;
+      g_graphics2d_if->PaintImageData(cxt->graphics2d, cxt->oscopeData, &topLeft, NULL);
+      g_graphics2d_if->Flush(cxt->graphics2d, flushCallback);
+
+      cxt->msToUpdateVideo = ++cxt->frameCounter * 1000 / FRAME_RATE;
+    }
+  }
+
+  g_core_if->CallOnMainThread(5, timerCallback, 0);
+}
+
 static void ReadCallback(void* user_data, int32_t result)
 {
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
   struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
+  struct PP_CompletionCallback timerCallback = { TimerCallback, cxt };
   void *temp;
   struct PP_Var var_result;
   struct PP_Size graphics_size;
@@ -248,22 +392,9 @@ static void ReadCallback(void* user_data, int32_t result)
       &graphics_size,
       PP_TRUE
     );
-{
-  int i;
-  uint32_t *pixels = g_imagedata_if->Map(cxt->oscopeData);
-  struct PP_CompletionCallback flushCallback = { GraphicsFlushCallback, cxt };
 
-  pixels += 128 * OSCOPE_WIDTH;
-  for (i = 0; i < OSCOPE_WIDTH; i++)
-    *pixels++ = 0xFFFFFFFF;
-  g_graphics2d_if->ReplaceContents(cxt->graphics2d, cxt->oscopeData);
-  g_graphics2d_if->Flush(cxt->graphics2d, flushCallback);
-}
-    if (cxt->autoplay)
-    {
-      g_audio_if->StartPlayback(cxt->audioHandle);
-      cxt->isPlaying = 1;
-    }
+    /* start the timer immediately */
+    g_core_if->CallOnMainThread(0, timerCallback, 0);
 
     /* signal the web page that the load was successful */
     var_result = AllocateVarFromCStr("songLoaded:1");
@@ -311,7 +442,7 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
     if (strcmp(argn[i], "songurl") == 0)
       urlProperty = AllocateVarFromCStr(argv[i]);
     else if (strcmp(argn[i], "autoplay"))
-      cxt->autoplay = 1;
+      cxt->startPlaying = 1;
   }
 
   /* prepare audio interface */
@@ -319,7 +450,7 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, FREQUENCY, cxt->sampleCount);
   if (!cxt->audioConfig)
     return PP_FALSE;
-  cxt->audioHandle = g_audio_if->Create(instance, cxt->audioConfig, GmeCallback, cxt);
+  cxt->audioHandle = g_audio_if->Create(instance, cxt->audioConfig, AudioCallback, cxt);
   if (!cxt->audioHandle)
     return PP_FALSE;
 
@@ -338,6 +469,11 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
 }
 
 static void Instance_DidDestroy(PP_Instance instance) {
+  SaltyGmeContext *cxt;
+
+  cxt = GetContext(instance);
+
+  pthread_mutex_destroy(&cxt->audioMutex);
 }
 
 static void Instance_DidChangeView(PP_Instance instance,
@@ -441,6 +577,8 @@ printf("*** %s:%s:%d\n", __FILE__, __func__, __LINE__);
       (struct PPB_Audio*)(get_browser_interface(PPB_AUDIO_INTERFACE));
   g_audioconfig_if =
       (struct PPB_AudioConfig*)(get_browser_interface(PPB_AUDIO_CONFIG_INTERFACE));
+  g_core_if =
+      (struct PPB_Core*)(get_browser_interface(PPB_CORE_INTERFACE));
   g_graphics2d_if =
       (struct PPB_Graphics2D*)(get_browser_interface(PPB_GRAPHICS_2D_INTERFACE));
   g_imagedata_if =
