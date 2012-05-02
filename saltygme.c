@@ -98,6 +98,8 @@ typedef struct
   PP_Resource oscopeData;
   uint64_t msToUpdateVideo;
   int frameCounter;
+  uint8_t r, g, b;
+  int rInc, gInc, bInc;
 } SaltyGmeContext;
 
 /* for mapping { PP_Instance, SaltyGmeContext } */
@@ -133,6 +135,11 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->instance = instance;
   cxt->audioStart = 0;
   cxt->audioEnd = 0;
+
+  cxt->r = cxt->g = cxt->b = 250;
+  cxt->rInc = -2;
+  cxt->gInc = -3;
+  cxt->bInc = -4;
 
   if (pthread_mutex_init(&cxt->audioMutex, NULL) != 0)
     return PP_FALSE;
@@ -310,7 +317,16 @@ static void TimerCallback(void* user_data, int32_t result)
       pixels = g_imagedata_if->Map(cxt->oscopeData);
       memset(pixels, 0, OSCOPE_WIDTH * OSCOPE_HEIGHT * sizeof(unsigned int));
       vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
-      pixel = 0xFF00FF00;
+      cxt->r += cxt->rInc;
+      if (cxt->r < 64 || cxt->r > 250)
+        cxt->rInc *= -1;
+      cxt->g += cxt->gInc;
+      if (cxt->g < 192 || cxt->g > 250)
+        cxt->gInc *= -1;
+      cxt->b += cxt->bInc;
+      if (cxt->b < 128 || cxt->b > 250)
+        cxt->bInc *= -1;
+      pixel = 0xFF000000 | (cxt->r << 16) | (cxt->g << 8) | cxt->b;
       for (i = 0; i < OSCOPE_WIDTH * CHANNELS; i++)
       {
         if (i & 1)  /* right channel data */
