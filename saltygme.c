@@ -51,9 +51,7 @@ static struct PPB_Var* g_var_if = NULL;
 #define MAX_RESULT_STR_LEN 100
 #define NET_BUFFER_INCREMENT (1024 * 1024)
 #define CHANNELS 2
-
 #define BUFFER_SIZE (FREQUENCY * CHANNELS)
-#define PERIOD_SIZE (BUFFER_SIZE / 5)
 
 /* functions callable from JS */
 static const char* const kPrevTrackId = "prevTrack";
@@ -125,7 +123,6 @@ static PP_Bool InitContext(PP_Instance instance)
   mapEntry->instance = instance;
   cxt = &mapEntry->context;
 
-  cxt->sampleCount = 4096;
   cxt->trackCount = 1;
   cxt->networkBuffer = NULL;
   cxt->networkBufferSize = 0;
@@ -179,7 +176,6 @@ static void AudioCallback(void* samples, uint32_t reqLenInBytes, void* user_data
   int actualLen;
 
   pthread_mutex_lock(&cxt->audioMutex);
-printf("request for %d bytes; start, end = %d, %d\n", reqLenInBytes, cxt->audioStart, cxt->audioEnd);
 
   /* if there is no audio ready to feed, leave */
   if (cxt->audioStart >= cxt->audioEnd)
@@ -206,14 +202,12 @@ printf("request for %d bytes; start, end = %d, %d\n", reqLenInBytes, cxt->audioS
   /* wrap-around case */
   if (actualLen < reqLenInBytes)
   {
-printf("wraparound; start, end = %d, %d\n", cxt->audioStart, cxt->audioEnd);
     samples += actualLen;
     actualLen = reqLenInBytes - actualLen;
     bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE) * 2;
     /* feed it */
     memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / 2], actualLen);
     cxt->audioStart += actualLen / 2;
-printf("done with wraparound case\n");
   }
 
   pthread_mutex_unlock(&cxt->audioMutex);
@@ -265,23 +259,38 @@ static void TimerCallback(void* user_data, int32_t result)
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
   struct PP_CompletionCallback timerCallback = { TimerCallback, cxt };
   struct PP_CompletionCallback flushCallback = { GraphicsFlushCallback, cxt };
-  gme_err_t gmeErr;
   int i;
   uint32_t *pixels;
   uint32_t pixel;
   struct PP_Point topLeft;
   short *vizBuffer;
+  int samplesToGenerate;
 
   if (cxt->isPlaying || cxt->startPlaying)
   {
     /* check if it's time to generate more audio */
     pthread_mutex_lock(&cxt->audioMutex);
-    if ((cxt->audioEnd - cxt->audioStart) < (PERIOD_SIZE / 2))
+    if ((cxt->audioEnd - cxt->audioStart) < (cxt->sampleCount / 2))
     {
-printf("Generating more audio; start, end = %d, %d ... ", cxt->audioStart, cxt->audioEnd);
-      gmeErr = gme_play(cxt->emu, PERIOD_SIZE, &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
-      cxt->audioEnd += PERIOD_SIZE;
-printf("%d, %d\n", cxt->audioStart, cxt->audioEnd);
+      if (((cxt->audioEnd + cxt->sampleCount) % BUFFER_SIZE) < (cxt->audioStart % BUFFER_SIZE))
+      {
+        /* before the wraparound */
+        samplesToGenerate = BUFFER_SIZE - (cxt->audioEnd % BUFFER_SIZE);
+        gme_play(cxt->emu, samplesToGenerate,
+          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
+        cxt->audioEnd += samplesToGenerate;
+
+        /* after the wraparound */
+        samplesToGenerate = cxt->sampleCount - samplesToGenerate;
+        gme_play(cxt->emu, samplesToGenerate,
+          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
+        cxt->audioEnd += samplesToGenerate;
+      }
+      else
+      {
+        gme_play(cxt->emu, cxt->sampleCount, &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
+        cxt->audioEnd += cxt->sampleCount;
+      }
     }
     pthread_mutex_unlock(&cxt->audioMutex);
 
@@ -446,8 +455,10 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   }
 
   /* prepare audio interface */
-  cxt->sampleCount = g_audioconfig_if->RecommendSampleFrameCount(FREQUENCY, cxt->sampleCount);
+  cxt->sampleCount = g_audioconfig_if->RecommendSampleFrameCount(FREQUENCY, 4096);
   cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, FREQUENCY, cxt->sampleCount);
+  cxt->sampleCount *= 2;
+
   if (!cxt->audioConfig)
     return PP_FALSE;
   cxt->audioHandle = g_audio_if->Create(instance, cxt->audioConfig, AudioCallback, cxt);
