@@ -30,6 +30,7 @@
 #include "ppapi/c/ppp_messaging.h"
 
 #include "gme-source/gme.h"
+#include "xz-embedded/xz.h"
 
 static PP_Module module_id = 0;
 static struct PPB_Audio *g_audio_if = NULL;
@@ -49,7 +50,7 @@ static struct PPB_Var* g_var_if = NULL;
 #define OSCOPE_HEIGHT 256
 #define FREQUENCY 44100
 #define MAX_RESULT_STR_LEN 100
-#define NET_BUFFER_INCREMENT (1024 * 1024)
+#define BUFFER_INCREMENT (1024 * 1024)
 #define CHANNELS 2
 #define BUFFER_SIZE (FREQUENCY * CHANNELS)
 
@@ -78,6 +79,9 @@ typedef struct
   int networkBufferPtr;
 
   /* audio playback */
+  unsigned char *dataBuffer;
+  int dataBufferSize;
+  int dataBufferPtr;
   PP_Resource audioConfig;
   PP_Resource audioHandle;
   int sampleCount;
@@ -365,6 +369,10 @@ static void ReadCallback(void* user_data, int32_t result)
   void *temp;
   struct PP_Var var_result;
   struct PP_Size graphics_size;
+  enum xz_ret ret;
+  struct xz_dec *xz;
+  struct xz_buf buf;
+  gme_err_t status;
 
   printf("ReadCallback(%p, %d)\n", user_data, result);
   
@@ -375,7 +383,7 @@ static void ReadCallback(void* user_data, int32_t result)
     /* is a bigger buffer needed? */
     if (cxt->networkBufferPtr >= cxt->networkBufferSize)
     {
-        cxt->networkBufferSize += NET_BUFFER_INCREMENT;
+        cxt->networkBufferSize += BUFFER_INCREMENT;
         temp = realloc(cxt->networkBuffer, cxt->networkBufferSize);
         if (!temp)
             printf("Help! memory problem!\n");
@@ -391,8 +399,50 @@ static void ReadCallback(void* user_data, int32_t result)
   }
   else
   {
-    gme_err_t status;
-    status = gme_open_data(cxt->networkBuffer, cxt->networkBufferSize, &cxt->emu, FREQUENCY);
+    /* transfer the network buffer to the data buffer, decompressing
+     * as necessary */
+    if ((cxt->networkBuffer[0] == 0xFD) &&
+        (cxt->networkBuffer[1] == '7') &&
+        (cxt->networkBuffer[2] == 'z') &&
+        (cxt->networkBuffer[3] == 'X') &&
+        (cxt->networkBuffer[4] == 'Z'))
+    {
+      buf.in = cxt->networkBuffer;
+      buf.in_pos = 0;
+      buf.in_size = cxt->networkBufferPtr;
+
+      cxt->dataBufferSize = BUFFER_INCREMENT;
+      cxt->dataBuffer = (unsigned char*)malloc(cxt->dataBufferSize);
+      if (!cxt->dataBuffer)
+      {
+        var_result = AllocateVarFromCStr("songLoaded:0");
+        return;
+      }
+
+      buf.out = cxt->dataBuffer;
+      buf.out_pos = 0;
+      buf.out_size = cxt->dataBufferSize;
+
+      xz_crc32_init();
+      xz = xz_dec_init(XZ_DYNALLOC, (uint32_t)-1);
+      if (!xz)
+      {
+        var_result = AllocateVarFromCStr("songLoaded:0");
+        return;
+      }
+
+      ret = xz_dec_run(xz, &buf);
+      cxt->dataBufferPtr = buf.out_pos;
+      free(cxt->networkBuffer);
+    }
+    else
+    {
+      cxt->dataBuffer = cxt->networkBuffer;
+      cxt->dataBufferPtr = cxt->networkBufferPtr;
+      cxt->networkBuffer = NULL;
+    }
+
+    status = gme_open_data(cxt->dataBuffer, cxt->dataBufferPtr, &cxt->emu, FREQUENCY);
     if (status)
     {
       /* signal the web page that the load failed */
@@ -443,7 +493,7 @@ static void OpenComplete(void* user_data, int32_t result)
 
   if (!cxt->networkBuffer)
   {
-    cxt->networkBufferSize = NET_BUFFER_INCREMENT;
+    cxt->networkBufferSize = BUFFER_INCREMENT;
     cxt->networkBuffer = (unsigned char*)malloc(cxt->networkBufferSize);
   }
   g_urlloader_if->ReadResponseBody(cxt->songLoader, 
