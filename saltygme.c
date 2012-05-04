@@ -281,6 +281,8 @@ static void TimerCallback(void* user_data, int32_t result)
     {
       if (((cxt->audioEnd + cxt->sampleCount) % BUFFER_SIZE) < (cxt->audioStart % BUFFER_SIZE))
       {
+        /* this case handles wraparound in the audio buffer */
+
         /* before the wraparound */
         samplesToGenerate = BUFFER_SIZE - (cxt->audioEnd % BUFFER_SIZE);
         gme_play(cxt->emu, samplesToGenerate,
@@ -295,6 +297,7 @@ static void TimerCallback(void* user_data, int32_t result)
       }
       else
       {
+        /* simple, non-wraparound case */
         gme_play(cxt->emu, cxt->sampleCount, &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
         cxt->audioEnd += cxt->sampleCount;
       }
@@ -305,6 +308,7 @@ static void TimerCallback(void* user_data, int32_t result)
     if (cxt->startPlaying)
     {
       ResetMillisecondsCount(cxt);
+      cxt->frameCounter = 0;
       cxt->msToUpdateVideo = 0;  /* update video at relative MS tick 0 */
       g_audio_if->StartPlayback(cxt->audioHandle);
       cxt->startPlaying = 0;
@@ -559,10 +563,13 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   else if (strncmp(message, kStartPlaybackId, strlen(kStartPlaybackId)) == 0)
   {
     printf("starting playback\n");
+    cxt->startPlaying = 1;
   }
   else if (strncmp(message, kStopPlaybackId, strlen(kStopPlaybackId)) == 0)
   {
     printf("stopping playback\n");
+    g_audio_if->StopPlayback(cxt->audioHandle);
+    cxt->isPlaying = 0;
   }
   else if (strncmp(message, kTrackCountId, strlen(kTrackCountId)) == 0)
   {
