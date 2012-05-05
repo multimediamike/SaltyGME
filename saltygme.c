@@ -416,6 +416,7 @@ static void ReadCallback(void* user_data, int32_t result)
       if (!cxt->dataBuffer)
       {
         var_result = AllocateVarFromCStr("songLoaded:0");
+        g_messaging_if->PostMessage(cxt->instance, var_result);
         return;
       }
 
@@ -428,12 +429,43 @@ static void ReadCallback(void* user_data, int32_t result)
       if (!xz)
       {
         var_result = AllocateVarFromCStr("songLoaded:0");
+        g_messaging_if->PostMessage(cxt->instance, var_result);
         return;
       }
 
-      ret = xz_dec_run(xz, &buf);
-      cxt->dataBufferPtr = buf.out_pos;
+      do
+      {
+        ret = xz_dec_run(xz, &buf);
+        if (ret == XZ_OK)
+        {
+          /* things are okay, but more buffer space is needed */
+          cxt->dataBufferSize += BUFFER_INCREMENT;
+          temp = realloc(cxt->dataBuffer, cxt->dataBufferSize);
+          if (!temp)
+            return;
+          else
+            cxt->dataBuffer = temp;
+          buf.out_size = cxt->dataBufferSize;
+        }
+        else
+        {
+          /* any other status is an exit condition (either error or stream end) */
+          break;
+        }
+      } while (ret != XZ_STREAM_END);
+
+      if (ret == XZ_STREAM_END)
+      {
+          cxt->dataBufferPtr = buf.out_pos;
+      }
+      else
+      {
+        free(cxt->dataBuffer);
+        cxt->dataBufferPtr = 0;
+        return;
+      }
       free(cxt->networkBuffer);
+      xz_dec_end(xz);
     }
     else
     {
@@ -447,6 +479,7 @@ static void ReadCallback(void* user_data, int32_t result)
     {
       /* signal the web page that the load failed */
       var_result = AllocateVarFromCStr("songLoaded:0");
+      g_messaging_if->PostMessage(cxt->instance, var_result);
       return;
     }
 
