@@ -54,6 +54,10 @@ static struct PPB_Var* g_var_if = NULL;
 #define CHANNELS 2
 #define BUFFER_SIZE (FREQUENCY * CHANNELS)
 
+#define CONTAINER_STRING "Game Music Files"
+#define CONTAINER_STRING_SIZE 16
+#define CONTAINER_MAX_TRACKS 256
+
 /* functions callable from JS */
 static const char* const kPrevTrackId = "prevTrack";
 static const char* const kNextTrackId = "nextTrack";
@@ -71,6 +75,9 @@ typedef struct
   PP_Instance instance;
   uint64_t baseTime;  /* base millisecond clock */
   pthread_mutex_t audioMutex;
+  int containerTracks;  /* if 0, file is something that GME handles alone */
+  uint32_t containerTrackOffsets[CONTAINER_MAX_TRACKS];
+  uint32_t containerTrackSizes[CONTAINER_MAX_TRACKS];
 
   /* network resource */
   PP_Resource songLoader;
@@ -373,6 +380,7 @@ static void ReadCallback(void* user_data, int32_t result)
   struct xz_dec *xz;
   struct xz_buf buf;
   gme_err_t status;
+  int i, j;
 
   printf("ReadCallback(%p, %d)\n", user_data, result);
   
@@ -474,7 +482,41 @@ static void ReadCallback(void* user_data, int32_t result)
       cxt->networkBuffer = NULL;
     }
 
-    status = gme_open_data(cxt->dataBuffer, cxt->dataBufferPtr, &cxt->emu, FREQUENCY);
+    /* check for special container format */
+    if (strncmp((char*)cxt->dataBuffer, CONTAINER_STRING, CONTAINER_STRING_SIZE) == 0)
+    {
+      cxt->containerTracks =
+        (cxt->dataBuffer[16] << 24) | (cxt->dataBuffer[17] << 16) |
+        (cxt->dataBuffer[18] <<  8) | (cxt->dataBuffer[19]);
+      j = 0;
+      /* load the offsets */
+      for (i = CONTAINER_STRING_SIZE + 4;
+           i < CONTAINER_STRING_SIZE + 4 + cxt->containerTracks * 4;
+           i += 4)
+      {
+        cxt->containerTrackOffsets[j++] = 
+          (cxt->dataBuffer[i  ] << 24) | (cxt->dataBuffer[i+1] << 16) |
+          (cxt->dataBuffer[i+2] <<  8) | (cxt->dataBuffer[i+3]);
+      }
+      /* derive the sizes */
+      for (i = 0; i < cxt->containerTracks - 1; i++)
+        cxt->containerTrackSizes[i] = 
+          cxt->containerTrackOffsets[i+1] - cxt->containerTrackOffsets[i];
+      /* special case for last size */
+      cxt->containerTrackSizes[i] =
+        cxt->dataBufferPtr - cxt->containerTrackOffsets[i];
+    }
+    else
+    {
+      cxt->containerTracks = 0;
+    }
+
+    if (cxt->containerTracks)
+      status = gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[0]],
+        cxt->containerTrackSizes[0], &cxt->emu, FREQUENCY);
+    else
+      status = gme_open_data(cxt->dataBuffer, cxt->dataBufferPtr, &cxt->emu, FREQUENCY);
+
     if (status)
     {
       /* signal the web page that the load failed */
