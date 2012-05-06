@@ -76,6 +76,7 @@ typedef struct
   uint64_t baseTime;  /* base millisecond clock */
   pthread_mutex_t audioMutex;
   int containerTracks;  /* if 0, file is something that GME handles alone */
+  int containerCurrentTrack;  /* track counter in case of container (not handled by GME) */
   uint32_t containerTrackOffsets[CONTAINER_MAX_TRACKS];
   uint32_t containerTrackSizes[CONTAINER_MAX_TRACKS];
 
@@ -98,7 +99,6 @@ typedef struct
   gme_info_t *metadata;
   int startPlaying;  /* indicates if the timer callback should start audio */
   int isPlaying;     /* indicates whether playback is currently occurring */
-  PP_Bool songLoaded;
   int voiceCount;
   short audioBuffer[BUFFER_SIZE];
   unsigned int audioStart;
@@ -142,7 +142,6 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->networkBufferPtr = 0;
   cxt->isPlaying = 0;
   cxt->startPlaying = 0;
-  cxt->songLoaded = PP_FALSE;
   cxt->instance = instance;
   cxt->audioStart = 0;
   cxt->audioEnd = 0;
@@ -272,6 +271,67 @@ static void GraphicsFlushCallback(void* user_data, int32_t result)
 {
 }
 
+/* returns the track number suitable for the UI, i.e., offset from 1 */
+static int GetCurrentUITrack(SaltyGmeContext *cxt)
+{
+  if (cxt->containerTracks)
+    return cxt->containerCurrentTrack + 1;
+  else
+    return cxt->currentTrack + 1;
+}
+
+static int GetTrackCount(SaltyGmeContext *cxt)
+{
+  if (cxt->containerTracks)
+    return cxt->containerTracks;
+  else
+    return cxt->trackCount;
+}
+
+static void PreviousTrack(SaltyGmeContext *cxt)
+{
+  int i;
+
+  if (cxt->containerTracks)
+  {
+    cxt->containerCurrentTrack--;
+    if (cxt->containerCurrentTrack < 0)
+      cxt->containerCurrentTrack = cxt->containerTracks - 1;
+    i = cxt->containerCurrentTrack;
+    gme_delete(cxt->emu);
+    gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[i]],
+      cxt->containerTrackSizes[i], &cxt->emu, FREQUENCY);
+    gme_start_track(cxt->emu, 0);
+  }
+  else
+  {
+    cxt->currentTrack--;
+    if (cxt->currentTrack < 0)
+      cxt->currentTrack = cxt->trackCount - 1;
+    gme_start_track(cxt->emu, cxt->currentTrack);
+  }
+}
+
+static void NextTrack(SaltyGmeContext *cxt)
+{
+  int i;
+
+  if (cxt->containerTracks)
+  {
+    cxt->containerCurrentTrack = (cxt->containerCurrentTrack + 1) % cxt->containerTracks;
+    i = cxt->containerCurrentTrack;
+    gme_delete(cxt->emu);
+    gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[i]],
+      cxt->containerTrackSizes[i], &cxt->emu, FREQUENCY);
+    gme_start_track(cxt->emu, 0);
+  }
+  else
+  {
+    cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
+    gme_start_track(cxt->emu, cxt->currentTrack);
+  }
+}
+
 static void TimerCallback(void* user_data, int32_t result)
 {
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
@@ -286,6 +346,16 @@ static void TimerCallback(void* user_data, int32_t result)
 
   if (cxt->isPlaying || cxt->startPlaying)
   {
+    if (cxt->startPlaying)
+    {
+      ResetMillisecondsCount(cxt);
+      cxt->frameCounter = 0;
+      cxt->msToUpdateVideo = 0;  /* update video at relative MS tick 0 */
+      cxt->isPlaying = 1;
+      cxt->audioStart = 0;
+      cxt->audioEnd = 0;
+    }
+
     /* check if it's time to generate more audio */
     pthread_mutex_lock(&cxt->audioMutex);
     if ((cxt->audioEnd - cxt->audioStart) < (cxt->sampleCount / 2))
@@ -318,12 +388,8 @@ static void TimerCallback(void* user_data, int32_t result)
     /* if playback is signaled, start playback and clear the signal */
     if (cxt->startPlaying)
     {
-      ResetMillisecondsCount(cxt);
-      cxt->frameCounter = 0;
-      cxt->msToUpdateVideo = 0;  /* update video at relative MS tick 0 */
       g_audio_if->StartPlayback(cxt->audioHandle);
       cxt->startPlaying = 0;
-      cxt->isPlaying = 1;
     }
 
     /* check if it's time to update the visualization */
@@ -505,9 +571,11 @@ static void ReadCallback(void* user_data, int32_t result)
       /* special case for last size */
       cxt->containerTrackSizes[i] =
         cxt->dataBufferPtr - cxt->containerTrackOffsets[i];
+      cxt->containerCurrentTrack = -1;
     }
     else
     {
+      cxt->currentTrack = -1;
       cxt->containerTracks = 0;
     }
 
@@ -515,7 +583,15 @@ static void ReadCallback(void* user_data, int32_t result)
       status = gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[0]],
         cxt->containerTrackSizes[0], &cxt->emu, FREQUENCY);
     else
+    {
       status = gme_open_data(cxt->dataBuffer, cxt->dataBufferPtr, &cxt->emu, FREQUENCY);
+      cxt->trackCount = gme_track_count(cxt->emu);
+    }
+
+    cxt->voiceCount = gme_voice_count(cxt->emu);
+    /* current track ID was set to -1 so that this function could would bump
+     * the track number and implicitly initialize playback */
+    NextTrack(cxt);
 
     if (status)
     {
@@ -524,15 +600,6 @@ static void ReadCallback(void* user_data, int32_t result)
       g_messaging_if->PostMessage(cxt->instance, var_result);
       return;
     }
-
-    /* song is ready, time to start playback */
-    cxt->songLoaded = PP_TRUE;
-
-    cxt->currentTrack = 0;
-    cxt->trackCount = gme_track_count(cxt->emu);
-    cxt->voiceCount = gme_voice_count(cxt->emu);
-    status = gme_start_track(cxt->emu, cxt->currentTrack);
-    status = gme_track_info(cxt->emu, &cxt->metadata, cxt->currentTrack);
 
     /* initialize the graphics */
     graphics_size.width = OSCOPE_WIDTH;
@@ -663,49 +730,36 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
 
   var_result = PP_MakeUndefined();
   message = AllocateCStrFromVar(var_message);
-  if (strncmp(message, kNextTrackId, strlen(kNextTrackId)) == 0)
+  if ((strncmp(message, kNextTrackId, strlen(kNextTrackId)) == 0) ||
+      (strncmp(message, kPrevTrackId, strlen(kPrevTrackId)) == 0))
   {
-    printf("next track\n");
-    if (gme_track_count(cxt->emu) < 1)
-      return;
-    cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
-    gme_start_track(cxt->emu, cxt->currentTrack);
-    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", cxt->currentTrack + 1);
-    var_result = AllocateVarFromCStr(result_string);
-  }
-  else if (strncmp(message, kPrevTrackId, strlen(kPrevTrackId)) == 0)
-  {
-    printf("previous track\n");
-    if (gme_track_count(cxt->emu) < 1)
-      return;
-    cxt->currentTrack = (cxt->currentTrack - 1);
-    if (cxt->currentTrack < 0)
-      cxt->currentTrack = cxt->trackCount - 1;
-    gme_start_track(cxt->emu, cxt->currentTrack);
-    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", cxt->currentTrack + 1);
+    g_audio_if->StopPlayback(cxt->audioHandle);
+    cxt->isPlaying = 0;
+    if (strncmp(message, kNextTrackId, strlen(kNextTrackId)) == 0)
+      NextTrack(cxt);
+    else
+      PreviousTrack(cxt);
+    cxt->startPlaying = 1;
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kStartPlaybackId, strlen(kStartPlaybackId)) == 0)
   {
-    printf("starting playback\n");
     cxt->startPlaying = 1;
   }
   else if (strncmp(message, kStopPlaybackId, strlen(kStopPlaybackId)) == 0)
   {
-    printf("stopping playback\n");
     g_audio_if->StopPlayback(cxt->audioHandle);
     cxt->isPlaying = 0;
   }
   else if (strncmp(message, kTrackCountId, strlen(kTrackCountId)) == 0)
   {
-    printf("getting track count\n");
-    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", cxt->trackCount);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", GetTrackCount(cxt));
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kCurrentTrackId, strlen(kCurrentTrackId)) == 0)
   {
-    printf("getting current track number\n");
-    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", cxt->currentTrack + 1);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kVoiceCountId, strlen(kVoiceCountId)) == 0)
