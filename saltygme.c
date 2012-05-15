@@ -655,8 +655,6 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   {
     if (strcmp(argn[i], "songurl") == 0)
       urlProperty = AllocateVarFromCStr(argv[i]);
-    else if (strcmp(argn[i], "autoplay"))
-      cxt->startPlaying = 1;
   }
 
   /* prepare audio interface */
