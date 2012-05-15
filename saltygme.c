@@ -281,33 +281,9 @@ static int GetCurrentUITrack(SaltyGmeContext *cxt)
   return cxt->currentTrack + 1;
 }
 
-static void PreviousTrack(SaltyGmeContext *cxt)
+static void StartTrack(SaltyGmeContext *cxt)
 {
   int i;
-
-  cxt->currentTrack--;
-  if (cxt->currentTrack < 0)
-    cxt->currentTrack = cxt->trackCount - 1;
-
-  if (cxt->specialContainer)
-  {
-    i = cxt->currentTrack;
-    gme_delete(cxt->emu);
-    gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[i]],
-      cxt->containerTrackSizes[i], &cxt->emu, FREQUENCY);
-    gme_start_track(cxt->emu, 0);
-  }
-  else
-  {
-    gme_start_track(cxt->emu, cxt->currentTrack);
-  }
-}
-
-static void NextTrack(SaltyGmeContext *cxt)
-{
-  int i;
-
-  cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
 
   if (cxt->specialContainer)
   {
@@ -570,7 +546,7 @@ static void ReadCallback(void* user_data, int32_t result)
     else
       cxt->specialContainer = 0;
 
-    cxt->currentTrack = -1;
+    cxt->currentTrack = 0;
 
     if (cxt->specialContainer)
       status = gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[0]],
@@ -582,9 +558,6 @@ static void ReadCallback(void* user_data, int32_t result)
     }
 
     cxt->voiceCount = gme_voice_count(cxt->emu);
-    /* current track ID was set to -1 so that this function could bump
-     * the track number and implicitly initialize playback */
-    NextTrack(cxt);
 
     if (status)
     {
@@ -728,9 +701,16 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
     g_audio_if->StopPlayback(cxt->audioHandle);
     cxt->isPlaying = 0;
     if (strncmp(message, kNextTrackId, strlen(kNextTrackId)) == 0)
-      NextTrack(cxt);
+    {
+      cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
+    }
     else
-      PreviousTrack(cxt);
+    {
+      cxt->currentTrack--;
+      if (cxt->currentTrack < 0)
+        cxt->currentTrack = cxt->trackCount - 1;
+    }
+    StartTrack(cxt);
     cxt->startPlaying = 1;
     snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
     var_result = AllocateVarFromCStr(result_string);
@@ -751,9 +731,7 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
 
       g_audio_if->StopPlayback(cxt->audioHandle);
       cxt->isPlaying = 0;
-      /* set counter one lower so that NextTrack() can do the busywork */
-      cxt->currentTrack--;
-      NextTrack(cxt);
+      StartTrack(cxt);
       cxt->startPlaying = 1;
       snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
       var_result = AllocateVarFromCStr(result_string);
