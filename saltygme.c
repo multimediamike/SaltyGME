@@ -59,6 +59,7 @@ static struct PPB_Var* g_var_if = NULL;
 #define CONTAINER_MAX_TRACKS 256
 
 /* functions callable from JS */
+static const char* const kSetTrackId = "setTrack";
 static const char* const kPrevTrackId = "prevTrack";
 static const char* const kNextTrackId = "nextTrack";
 static const char* const kStartPlaybackId = "startPlayback";
@@ -77,8 +78,7 @@ typedef struct
   PP_Instance instance;
   uint64_t baseTime;  /* base millisecond clock */
   pthread_mutex_t audioMutex;
-  int containerTracks;  /* if 0, file is something that GME handles alone */
-  int containerCurrentTrack;  /* track counter in case of container (not handled by GME) */
+  int specialContainer;  /* indicates special handling for a .gamemusic container */
   uint32_t containerTrackOffsets[CONTAINER_MAX_TRACKS];
   uint32_t containerTrackSizes[CONTAINER_MAX_TRACKS];
 
@@ -278,30 +278,20 @@ static void GraphicsFlushCallback(void* user_data, int32_t result)
 /* returns the track number suitable for the UI, i.e., offset from 1 */
 static int GetCurrentUITrack(SaltyGmeContext *cxt)
 {
-  if (cxt->containerTracks)
-    return cxt->containerCurrentTrack + 1;
-  else
-    return cxt->currentTrack + 1;
-}
-
-static int GetTrackCount(SaltyGmeContext *cxt)
-{
-  if (cxt->containerTracks)
-    return cxt->containerTracks;
-  else
-    return cxt->trackCount;
+  return cxt->currentTrack + 1;
 }
 
 static void PreviousTrack(SaltyGmeContext *cxt)
 {
   int i;
 
-  if (cxt->containerTracks)
+  cxt->currentTrack--;
+  if (cxt->currentTrack < 0)
+    cxt->currentTrack = cxt->trackCount - 1;
+
+  if (cxt->specialContainer)
   {
-    cxt->containerCurrentTrack--;
-    if (cxt->containerCurrentTrack < 0)
-      cxt->containerCurrentTrack = cxt->containerTracks - 1;
-    i = cxt->containerCurrentTrack;
+    i = cxt->currentTrack;
     gme_delete(cxt->emu);
     gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[i]],
       cxt->containerTrackSizes[i], &cxt->emu, FREQUENCY);
@@ -309,9 +299,6 @@ static void PreviousTrack(SaltyGmeContext *cxt)
   }
   else
   {
-    cxt->currentTrack--;
-    if (cxt->currentTrack < 0)
-      cxt->currentTrack = cxt->trackCount - 1;
     gme_start_track(cxt->emu, cxt->currentTrack);
   }
 }
@@ -320,10 +307,11 @@ static void NextTrack(SaltyGmeContext *cxt)
 {
   int i;
 
-  if (cxt->containerTracks)
+  cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
+
+  if (cxt->specialContainer)
   {
-    cxt->containerCurrentTrack = (cxt->containerCurrentTrack + 1) % cxt->containerTracks;
-    i = cxt->containerCurrentTrack;
+    i = cxt->currentTrack;
     gme_delete(cxt->emu);
     gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[i]],
       cxt->containerTrackSizes[i], &cxt->emu, FREQUENCY);
@@ -331,7 +319,6 @@ static void NextTrack(SaltyGmeContext *cxt)
   }
   else
   {
-    cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
     gme_start_track(cxt->emu, cxt->currentTrack);
   }
 }
@@ -558,13 +545,14 @@ static void ReadCallback(void* user_data, int32_t result)
     /* check for special container format */
     if (strncmp((char*)cxt->dataBuffer, CONTAINER_STRING, CONTAINER_STRING_SIZE) == 0)
     {
-      cxt->containerTracks =
+      cxt->specialContainer = 1;
+      cxt->trackCount =
         (cxt->dataBuffer[16] << 24) | (cxt->dataBuffer[17] << 16) |
         (cxt->dataBuffer[18] <<  8) | (cxt->dataBuffer[19]);
       j = 0;
       /* load the offsets */
       for (i = CONTAINER_STRING_SIZE + 4;
-           i < CONTAINER_STRING_SIZE + 4 + cxt->containerTracks * 4;
+           i < CONTAINER_STRING_SIZE + 4 + cxt->trackCount * 4;
            i += 4)
       {
         cxt->containerTrackOffsets[j++] = 
@@ -572,21 +560,19 @@ static void ReadCallback(void* user_data, int32_t result)
           (cxt->dataBuffer[i+2] <<  8) | (cxt->dataBuffer[i+3]);
       }
       /* derive the sizes */
-      for (i = 0; i < cxt->containerTracks - 1; i++)
+      for (i = 0; i < cxt->trackCount - 1; i++)
         cxt->containerTrackSizes[i] = 
           cxt->containerTrackOffsets[i+1] - cxt->containerTrackOffsets[i];
       /* special case for last size */
       cxt->containerTrackSizes[i] =
         cxt->dataBufferPtr - cxt->containerTrackOffsets[i];
-      cxt->containerCurrentTrack = -1;
     }
     else
-    {
-      cxt->currentTrack = -1;
-      cxt->containerTracks = 0;
-    }
+      cxt->specialContainer = 0;
 
-    if (cxt->containerTracks)
+    cxt->currentTrack = -1;
+
+    if (cxt->specialContainer)
       status = gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[0]],
         cxt->containerTrackSizes[0], &cxt->emu, FREQUENCY);
     else
@@ -596,7 +582,7 @@ static void ReadCallback(void* user_data, int32_t result)
     }
 
     cxt->voiceCount = gme_voice_count(cxt->emu);
-    /* current track ID was set to -1 so that this function could would bump
+    /* current track ID was set to -1 so that this function could bump
      * the track number and implicitly initialize playback */
     NextTrack(cxt);
 
@@ -727,6 +713,7 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   struct PP_Var var_result;
   char result_string[MAX_RESULT_STR_LEN];
   SaltyGmeContext *cxt;
+  int set_track_str_len;
 
   if (var_message.type != PP_VARTYPE_STRING) {
     /* Only handle string messages */
@@ -750,6 +737,30 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
     snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
     var_result = AllocateVarFromCStr(result_string);
   }
+  else if (strncmp(message, kSetTrackId, strlen(kSetTrackId)) == 0)
+  {
+    /* check that string length allows for a ':track_num' after the command
+     * and that there is a ':' character */
+    set_track_str_len = strlen(kSetTrackId);
+    if ((strlen(message) >= set_track_str_len + 2) &&
+        (message[set_track_str_len]) == ':')
+    {
+      cxt->currentTrack = atoi(&message[set_track_str_len + 1]) - 1;
+      if (cxt->currentTrack < 0)
+        cxt->currentTrack = 0;
+      else if (cxt->currentTrack >= cxt->trackCount)
+        cxt->currentTrack = cxt->trackCount - 1;
+
+      g_audio_if->StopPlayback(cxt->audioHandle);
+      cxt->isPlaying = 0;
+      /* set counter one lower so that NextTrack() can do the busywork */
+      cxt->currentTrack--;
+      NextTrack(cxt);
+      cxt->startPlaying = 1;
+      snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
+      var_result = AllocateVarFromCStr(result_string);
+    }
+  }
   else if (strncmp(message, kStartPlaybackId, strlen(kStartPlaybackId)) == 0)
   {
     cxt->startPlaying = 1;
@@ -761,7 +772,7 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   }
   else if (strncmp(message, kTrackCountId, strlen(kTrackCountId)) == 0)
   {
-    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", GetTrackCount(cxt));
+    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", cxt->trackCount);
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kCurrentTrackId, strlen(kCurrentTrackId)) == 0)
