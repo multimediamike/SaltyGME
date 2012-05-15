@@ -63,6 +63,8 @@ static const char* const kPrevTrackId = "prevTrack";
 static const char* const kNextTrackId = "nextTrack";
 static const char* const kStartPlaybackId = "startPlayback";
 static const char* const kStopPlaybackId = "stopPlayback";
+static const char* const kDisableVizId = "disableViz";
+static const char* const kEnableVizId = "enableViz";
 
 /* properties that can be queried from JS */
 static const char* const kTrackCountId = "trackCount";
@@ -111,6 +113,7 @@ typedef struct
   int frameCounter;
   uint8_t r, g, b;
   int rInc, gInc, bInc;
+  int vizEnabled;
 } SaltyGmeContext;
 
 /* for mapping { PP_Instance, SaltyGmeContext } */
@@ -150,6 +153,7 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->rInc = -2;
   cxt->gInc = -3;
   cxt->bInc = -4;
+  cxt->vizEnabled = 1;
 
   if (pthread_mutex_init(&cxt->audioMutex, NULL) != 0)
     return PP_FALSE;
@@ -395,37 +399,40 @@ static void TimerCallback(void* user_data, int32_t result)
     /* check if it's time to update the visualization */
     if (GetMillisecondsCount(cxt) >= cxt->msToUpdateVideo)
     {
-      pixels = g_imagedata_if->Map(cxt->oscopeData);
-      memset(pixels, 0, OSCOPE_WIDTH * OSCOPE_HEIGHT * sizeof(unsigned int));
-      vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
-      cxt->r += cxt->rInc;
-      if (cxt->r < 64 || cxt->r > 250)
-        cxt->rInc *= -1;
-      cxt->g += cxt->gInc;
-      if (cxt->g < 192 || cxt->g > 250)
-        cxt->gInc *= -1;
-      cxt->b += cxt->bInc;
-      if (cxt->b < 128 || cxt->b > 250)
-        cxt->bInc *= -1;
-      pixel = 0xFF000000 | (cxt->r << 16) | (cxt->g << 8) | cxt->b;
-      for (i = 0; i < OSCOPE_WIDTH * CHANNELS; i++)
+      if (cxt->vizEnabled)
       {
-        if (i & 1)  /* right channel data */
-          pixels[OSCOPE_WIDTH * ((192 - (vizBuffer[i] / 512)) - 1) + (i >> 1)] = pixel;
-        else        /* left channel data */
-          pixels[OSCOPE_WIDTH * (64 - (vizBuffer[i] / 512)) + (i >> 1)] = pixel;
+        pixels = g_imagedata_if->Map(cxt->oscopeData);
+        memset(pixels, 0, OSCOPE_WIDTH * OSCOPE_HEIGHT * sizeof(unsigned int));
+        vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
+        cxt->r += cxt->rInc;
+        if (cxt->r < 64 || cxt->r > 250)
+          cxt->rInc *= -1;
+        cxt->g += cxt->gInc;
+        if (cxt->g < 192 || cxt->g > 250)
+          cxt->gInc *= -1;
+        cxt->b += cxt->bInc;
+        if (cxt->b < 128 || cxt->b > 250)
+          cxt->bInc *= -1;
+        pixel = 0xFF000000 | (cxt->r << 16) | (cxt->g << 8) | cxt->b;
+        for (i = 0; i < OSCOPE_WIDTH * CHANNELS; i++)
+        {
+          if (i & 1)  /* right channel data */
+            pixels[OSCOPE_WIDTH * ((192 - (vizBuffer[i] / 512)) - 1) + (i >> 1)] = pixel;
+          else        /* left channel data */
+            pixels[OSCOPE_WIDTH * (64 - (vizBuffer[i] / 512)) + (i >> 1)] = pixel;
+        }
+
+        /* white bar in the middle */
+        pixels = g_imagedata_if->Map(cxt->oscopeData);
+        pixels += OSCOPE_WIDTH * OSCOPE_HEIGHT / 2;
+        for (i = 0; i < OSCOPE_WIDTH; i++)
+          *pixels++ = 0xFFFFFFFF;
+
+        topLeft.x = 0;
+        topLeft.y = 0;
+        g_graphics2d_if->PaintImageData(cxt->graphics2d, cxt->oscopeData, &topLeft, NULL);
+        g_graphics2d_if->Flush(cxt->graphics2d, flushCallback);
       }
-
-      /* white bar in the middle */
-      pixels = g_imagedata_if->Map(cxt->oscopeData);
-      pixels += OSCOPE_WIDTH * OSCOPE_HEIGHT / 2;
-      for (i = 0; i < OSCOPE_WIDTH; i++)
-        *pixels++ = 0xFFFFFFFF;
-
-      topLeft.x = 0;
-      topLeft.y = 0;
-      g_graphics2d_if->PaintImageData(cxt->graphics2d, cxt->oscopeData, &topLeft, NULL);
-      g_graphics2d_if->Flush(cxt->graphics2d, flushCallback);
 
       cxt->msToUpdateVideo = ++cxt->frameCounter * 1000 / FRAME_RATE;
     }
@@ -771,6 +778,14 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   else if (strncmp(message, kVoiceNameId, strlen(kVoiceNameId)) == 0)
   {
     printf("getting voice name\n");
+  }
+  else if (strncmp(message, kDisableVizId, strlen(kDisableVizId)) == 0)
+  {
+    cxt->vizEnabled = 0;
+  }
+  else if (strncmp(message, kEnableVizId, strlen(kEnableVizId)) == 0)
+  {
+    cxt->vizEnabled = 1;
   }
   else
   {
