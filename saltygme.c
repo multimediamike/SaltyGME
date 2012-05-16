@@ -70,8 +70,7 @@ static const char* const kEnableVizId = "enableViz";
 /* properties that can be queried from JS */
 static const char* const kTrackCountId = "trackCount";
 static const char* const kCurrentTrackId = "currentTrack";
-static const char* const kVoiceCountId = "voiceCount";
-static const char* const kVoiceNameId = "voiceName";
+static const char* const kGetVoicesId = "getVoices";
 
 typedef struct
 {
@@ -101,7 +100,6 @@ typedef struct
   gme_info_t *metadata;
   int startPlaying;  /* indicates if the timer callback should start audio */
   int isPlaying;     /* indicates whether playback is currently occurring */
-  int voiceCount;
   short audioBuffer[BUFFER_SIZE];
   unsigned int audioStart;
   unsigned int audioEnd;
@@ -557,8 +555,6 @@ static void ReadCallback(void* user_data, int32_t result)
       cxt->trackCount = gme_track_count(cxt->emu);
     }
 
-    cxt->voiceCount = gme_voice_count(cxt->emu);
-
     if (status)
     {
       /* signal the web page that the load failed */
@@ -685,6 +681,7 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   char result_string[MAX_RESULT_STR_LEN];
   SaltyGmeContext *cxt;
   int set_track_str_len;
+  int i;
 
   if (var_message.type != PP_VARTYPE_STRING) {
     /* Only handle string messages */
@@ -756,15 +753,19 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
     snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
     var_result = AllocateVarFromCStr(result_string);
   }
-  else if (strncmp(message, kVoiceCountId, strlen(kVoiceCountId)) == 0)
+  else if (strncmp(message, kGetVoicesId, strlen(kGetVoicesId)) == 0)
   {
-    printf("get voice count (%d)\n", cxt->voiceCount);
-    snprintf(result_string, MAX_RESULT_STR_LEN, "voiceCount:%d", cxt->voiceCount);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "voiceCount:%d", gme_voice_count(cxt->emu));
     var_result = AllocateVarFromCStr(result_string);
-  }
-  else if (strncmp(message, kVoiceNameId, strlen(kVoiceNameId)) == 0)
-  {
-    printf("getting voice name\n");
+    g_messaging_if->PostMessage(cxt->instance, var_result);
+    for (i = 0; i < gme_voice_count(cxt->emu); i++)
+    {
+      snprintf(result_string, MAX_RESULT_STR_LEN, "voiceName:%d,%s",
+        i + 1, gme_voice_name(cxt->emu, i));
+      var_result = AllocateVarFromCStr(result_string);
+      g_messaging_if->PostMessage(cxt->instance, var_result);
+    }
+    var_result = PP_MakeUndefined();
   }
   else if (strncmp(message, kDisableVizId, strlen(kDisableVizId)) == 0)
   {
