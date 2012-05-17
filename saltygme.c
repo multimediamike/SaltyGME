@@ -72,8 +72,17 @@ static const char* const kTrackCountId = "trackCount";
 static const char* const kCurrentTrackId = "currentTrack";
 static const char* const kGetVoicesId = "getVoices";
 
+/* things that can go wrong */
+#define FAILURE_MEMORY 1
+#define FAILURE_DECOMPRESS 2
+#define FAILURE_CORRUPT_FILE 3
+#define FAILURE_NETWORK 4
+
 typedef struct
 {
+  int failureState;  /* if this is non-zero, something went wrong and no
+                      * further processing should occur */
+
   PP_Instance instance;
   uint64_t baseTime;  /* base millisecond clock */
   pthread_mutex_t audioMutex;
@@ -137,6 +146,7 @@ static PP_Bool InitContext(PP_Instance instance)
   mapEntry->instance = instance;
   cxt = &mapEntry->context;
 
+  cxt->failureState = 0;
   cxt->trackCount = 1;
   cxt->networkBuffer = NULL;
   cxt->networkBufferSize = 0;
@@ -416,8 +426,9 @@ static void ReadCallback(void* user_data, int32_t result)
   gme_err_t status;
   int i, j;
 
-  printf("ReadCallback(%p, %d)\n", user_data, result);
-  
+  if (cxt->failureState)
+    return;
+
   /* data has been transferred to buffer; check if more is on the way */
   cxt->networkBufferPtr += result;
   if (result > 0)
@@ -425,12 +436,15 @@ static void ReadCallback(void* user_data, int32_t result)
     /* is a bigger buffer needed? */
     if (cxt->networkBufferPtr >= cxt->networkBufferSize)
     {
-        cxt->networkBufferSize += BUFFER_INCREMENT;
-        temp = realloc(cxt->networkBuffer, cxt->networkBufferSize);
-        if (!temp)
-            printf("Help! memory problem!\n");
-        else
-            cxt->networkBuffer = temp;
+      cxt->networkBufferSize += BUFFER_INCREMENT;
+      temp = realloc(cxt->networkBuffer, cxt->networkBufferSize);
+      if (!temp)
+      {
+        cxt->failureState = FAILURE_MEMORY;
+        return;
+      }
+      else
+        cxt->networkBuffer = temp;
     }
 
     /* not all the data has arrived yet; read again */
@@ -457,6 +471,7 @@ static void ReadCallback(void* user_data, int32_t result)
       cxt->dataBuffer = (unsigned char*)malloc(cxt->dataBufferSize);
       if (!cxt->dataBuffer)
       {
+        cxt->failureState = FAILURE_MEMORY;
         var_result = AllocateVarFromCStr("songLoaded:0");
         g_messaging_if->PostMessage(cxt->instance, var_result);
         return;
@@ -470,6 +485,7 @@ static void ReadCallback(void* user_data, int32_t result)
       xz = xz_dec_init(XZ_DYNALLOC, (uint32_t)-1);
       if (!xz)
       {
+        cxt->failureState = FAILURE_DECOMPRESS;
         var_result = AllocateVarFromCStr("songLoaded:0");
         g_messaging_if->PostMessage(cxt->instance, var_result);
         return;
@@ -484,10 +500,16 @@ static void ReadCallback(void* user_data, int32_t result)
           cxt->dataBufferSize += BUFFER_INCREMENT;
           temp = realloc(cxt->dataBuffer, cxt->dataBufferSize);
           if (!temp)
+          {
+            cxt->failureState = FAILURE_MEMORY;
+            var_result = AllocateVarFromCStr("songLoaded:0");
+            g_messaging_if->PostMessage(cxt->instance, var_result);
             return;
+          }
           else
             cxt->dataBuffer = temp;
           buf.out_size = cxt->dataBufferSize;
+          buf.out = cxt->dataBuffer;
         }
         else
         {
@@ -504,6 +526,9 @@ static void ReadCallback(void* user_data, int32_t result)
       {
         free(cxt->dataBuffer);
         cxt->dataBufferPtr = 0;
+        cxt->failureState = FAILURE_DECOMPRESS;
+        var_result = AllocateVarFromCStr("songLoaded:0");
+        g_messaging_if->PostMessage(cxt->instance, var_result);
         return;
       }
       free(cxt->networkBuffer);
@@ -558,6 +583,7 @@ static void ReadCallback(void* user_data, int32_t result)
     if (status)
     {
       /* signal the web page that the load failed */
+      cxt->failureState = FAILURE_CORRUPT_FILE;
       var_result = AllocateVarFromCStr("songLoaded:0");
       g_messaging_if->PostMessage(cxt->instance, var_result);
       return;
@@ -590,15 +616,28 @@ static void OpenComplete(void* user_data, int32_t result)
 {
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
   struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
+  struct PP_Var var_result;
 
   /* this probably needs to be more graceful, but this is a good first cut */
   if (result != 0)
+  {
+    cxt->failureState = FAILURE_NETWORK;
+    var_result = AllocateVarFromCStr("songLoaded:0");
+    g_messaging_if->PostMessage(cxt->instance, var_result);
     return;
+  }
 
   if (!cxt->networkBuffer)
   {
     cxt->networkBufferSize = BUFFER_INCREMENT;
     cxt->networkBuffer = (unsigned char*)malloc(cxt->networkBufferSize);
+    if (!cxt->networkBuffer)
+    {
+      cxt->failureState = FAILURE_MEMORY;
+      var_result = AllocateVarFromCStr("songLoaded:0");
+      g_messaging_if->PostMessage(cxt->instance, var_result);
+      return;
+    }
   }
   g_urlloader_if->ReadResponseBody(cxt->songLoader, 
     cxt->networkBuffer, cxt->networkBufferSize, readCallback);
@@ -689,6 +728,8 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   }
 
   cxt = GetContext(instance);
+  if (cxt->failureState)
+    return;
 
   var_result = PP_MakeUndefined();
   message = AllocateCStrFromVar(var_message);
@@ -788,7 +829,6 @@ PP_EXPORT int32_t PPP_InitializeModule(PP_Module a_module_id,
                                        PPB_GetInterface get_browser_interface) {
   module_id = a_module_id;
   g_var_if = (struct PPB_Var*)(get_browser_interface(PPB_VAR_INTERFACE));
-printf("*** %s:%s:%d\n", __FILE__, __func__, __LINE__);
 
   /* load all the modules that will be required */
   g_audio_if =
@@ -837,4 +877,5 @@ PP_EXPORT const void* PPP_GetInterface(const char* interface_name) {
  * Called before the plugin module is unloaded.
  */
 PP_EXPORT void PPP_ShutdownModule() {
+printf("%s\n", __func__);
 }
