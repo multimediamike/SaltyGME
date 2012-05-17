@@ -577,7 +577,8 @@ static void ReadCallback(void* user_data, int32_t result)
     else
     {
       status = gme_open_data(cxt->dataBuffer, cxt->dataBufferPtr, &cxt->emu, FREQUENCY);
-      cxt->trackCount = gme_track_count(cxt->emu);
+      if (!status)
+        cxt->trackCount = gme_track_count(cxt->emu);
     }
 
     if (status)
@@ -877,5 +878,4 @@ PP_EXPORT const void* PPP_GetInterface(const char* interface_name) {
  * Called before the plugin module is unloaded.
  */
 PP_EXPORT void PPP_ShutdownModule() {
-printf("%s\n", __func__);
 }
