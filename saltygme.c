@@ -130,6 +130,11 @@ typedef struct
   SaltyGmeContext context;
 } InstanceContextMap;
 
+#define SONG_LOAD_FAILED(error) \
+  cxt->failureState = error; \
+  var_result = AllocateVarFromCStr("songLoaded:0"); \
+  g_messaging_if->PostMessage(cxt->instance, var_result);
+
 #define MAX_INSTANCES 5
 static InstanceContextMap g_instanceContextMap[MAX_INSTANCES];
 static int g_instanceContextMapSize = 0;
@@ -440,7 +445,7 @@ static void ReadCallback(void* user_data, int32_t result)
       temp = realloc(cxt->networkBuffer, cxt->networkBufferSize);
       if (!temp)
       {
-        cxt->failureState = FAILURE_MEMORY;
+        SONG_LOAD_FAILED(FAILURE_MEMORY);
         return;
       }
       else
@@ -471,9 +476,7 @@ static void ReadCallback(void* user_data, int32_t result)
       cxt->dataBuffer = (unsigned char*)malloc(cxt->dataBufferSize);
       if (!cxt->dataBuffer)
       {
-        cxt->failureState = FAILURE_MEMORY;
-        var_result = AllocateVarFromCStr("songLoaded:0");
-        g_messaging_if->PostMessage(cxt->instance, var_result);
+        SONG_LOAD_FAILED(FAILURE_MEMORY);
         return;
       }
 
@@ -485,9 +488,7 @@ static void ReadCallback(void* user_data, int32_t result)
       xz = xz_dec_init(XZ_DYNALLOC, (uint32_t)-1);
       if (!xz)
       {
-        cxt->failureState = FAILURE_DECOMPRESS;
-        var_result = AllocateVarFromCStr("songLoaded:0");
-        g_messaging_if->PostMessage(cxt->instance, var_result);
+        SONG_LOAD_FAILED(FAILURE_DECOMPRESS);
         return;
       }
 
@@ -501,9 +502,7 @@ static void ReadCallback(void* user_data, int32_t result)
           temp = realloc(cxt->dataBuffer, cxt->dataBufferSize);
           if (!temp)
           {
-            cxt->failureState = FAILURE_MEMORY;
-            var_result = AllocateVarFromCStr("songLoaded:0");
-            g_messaging_if->PostMessage(cxt->instance, var_result);
+            SONG_LOAD_FAILED(FAILURE_MEMORY);
             return;
           }
           else
@@ -526,9 +525,7 @@ static void ReadCallback(void* user_data, int32_t result)
       {
         free(cxt->dataBuffer);
         cxt->dataBufferPtr = 0;
-        cxt->failureState = FAILURE_DECOMPRESS;
-        var_result = AllocateVarFromCStr("songLoaded:0");
-        g_messaging_if->PostMessage(cxt->instance, var_result);
+        SONG_LOAD_FAILED(FAILURE_DECOMPRESS);
         return;
       }
       free(cxt->networkBuffer);
@@ -584,9 +581,7 @@ static void ReadCallback(void* user_data, int32_t result)
     if (status)
     {
       /* signal the web page that the load failed */
-      cxt->failureState = FAILURE_CORRUPT_FILE;
-      var_result = AllocateVarFromCStr("songLoaded:0");
-      g_messaging_if->PostMessage(cxt->instance, var_result);
+      SONG_LOAD_FAILED(FAILURE_CORRUPT_FILE);
       return;
     }
 
@@ -622,9 +617,7 @@ static void OpenComplete(void* user_data, int32_t result)
   /* this probably needs to be more graceful, but this is a good first cut */
   if (result != 0)
   {
-    cxt->failureState = FAILURE_NETWORK;
-    var_result = AllocateVarFromCStr("songLoaded:0");
-    g_messaging_if->PostMessage(cxt->instance, var_result);
+    SONG_LOAD_FAILED(FAILURE_NETWORK);
     return;
   }
 
@@ -634,9 +627,7 @@ static void OpenComplete(void* user_data, int32_t result)
     cxt->networkBuffer = (unsigned char*)malloc(cxt->networkBufferSize);
     if (!cxt->networkBuffer)
     {
-      cxt->failureState = FAILURE_MEMORY;
-      var_result = AllocateVarFromCStr("songLoaded:0");
-      g_messaging_if->PostMessage(cxt->instance, var_result);
+      SONG_LOAD_FAILED(FAILURE_MEMORY);
       return;
     }
   }
