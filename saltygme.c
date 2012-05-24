@@ -57,6 +57,7 @@ static struct PPB_Var* g_var_if = NULL;
 #define CONTAINER_STRING "Game Music Files"
 #define CONTAINER_STRING_SIZE 16
 #define CONTAINER_MAX_TRACKS 256
+#define MAX_VOICES 10
 
 /* functions callable from JS */
 static const char* const kSetTrackId = "setTrack";
@@ -66,6 +67,7 @@ static const char* const kStartPlaybackId = "startPlayback";
 static const char* const kStopPlaybackId = "stopPlayback";
 static const char* const kDisableVizId = "disableViz";
 static const char* const kEnableVizId = "enableViz";
+static const char* const kToggleVoiceId = "toggleVoice";
 
 /* properties that can be queried from JS */
 static const char* const kTrackCountId = "trackCount";
@@ -112,6 +114,7 @@ typedef struct
   short audioBuffer[BUFFER_SIZE];
   unsigned int audioStart;
   unsigned int audioEnd;
+  int voiceMuted[MAX_VOICES];
 
   /* graphics */
   PP_Resource graphics2d;
@@ -297,6 +300,7 @@ static int GetCurrentUITrack(SaltyGmeContext *cxt)
 static void StartTrack(SaltyGmeContext *cxt)
 {
   int i;
+  int voiceCount;
 
   if (cxt->specialContainer)
   {
@@ -310,6 +314,12 @@ static void StartTrack(SaltyGmeContext *cxt)
   {
     gme_start_track(cxt->emu, cxt->currentTrack);
   }
+
+  /* mute states propagate across tracks */
+  voiceCount = gme_voice_count(cxt->emu);
+  for (i = 0; i < MAX_VOICES; i++)
+    if (i < voiceCount)
+      gme_mute_voice(cxt->emu, i, cxt->voiceMuted[i]);
 }
 
 static void TimerCallback(void* user_data, int32_t result)
@@ -578,6 +588,10 @@ static void ReadCallback(void* user_data, int32_t result)
         cxt->trackCount = gme_track_count(cxt->emu);
     }
 
+    /* initial voice states */
+    for (i = 0; i < MAX_VOICES; i++)
+      cxt->voiceMuted[i] = 0;
+
     if (status)
     {
       /* signal the web page that the load failed */
@@ -711,8 +725,9 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   struct PP_Var var_result;
   char result_string[MAX_RESULT_STR_LEN];
   SaltyGmeContext *cxt;
-  int set_track_str_len;
+  int str_len;
   int i;
+  int voice;
 
   if (var_message.type != PP_VARTYPE_STRING) {
     /* Only handle string messages */
@@ -749,11 +764,11 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   {
     /* check that string length allows for a ':track_num' after the command
      * and that there is a ':' character */
-    set_track_str_len = strlen(kSetTrackId);
-    if ((strlen(message) >= set_track_str_len + 2) &&
-        (message[set_track_str_len]) == ':')
+    str_len = strlen(kSetTrackId);
+    if ((strlen(message) >= str_len + 2) &&
+        (message[str_len]) == ':')
     {
-      cxt->currentTrack = atoi(&message[set_track_str_len + 1]) - 1;
+      cxt->currentTrack = atoi(&message[str_len + 1]) - 1;
       if (cxt->currentTrack < 0)
         cxt->currentTrack = 0;
       else if (cxt->currentTrack >= cxt->trackCount)
@@ -807,6 +822,22 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   else if (strncmp(message, kEnableVizId, strlen(kEnableVizId)) == 0)
   {
     cxt->vizEnabled = 1;
+  }
+  else if (strncmp(message, kToggleVoiceId, strlen(kToggleVoiceId)) == 0)
+  {
+    /* check that string length allows for a ':track_num' after the command
+     * and that there is a ':' character */
+    str_len = strlen(kToggleVoiceId);
+    if ((strlen(message) >= str_len + 2) &&
+        (message[str_len]) == ':')
+    {
+      voice = atoi(&message[str_len + 1]) - 1;
+      if (voice >= 0 && voice < gme_voice_count(cxt->emu))
+      {
+        cxt->voiceMuted[voice] ^= 1;
+        gme_mute_voice(cxt->emu, voice, cxt->voiceMuted[voice]);
+      }
+    }
   }
   else
   {
