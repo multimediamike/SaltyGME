@@ -388,7 +388,9 @@ static void TimerCallback(void* user_data, int32_t result)
       if (cxt->vizEnabled)
       {
         pixels = g_imagedata_if->Map(cxt->oscopeData);
-        memset(pixels, 0, OSCOPE_WIDTH * OSCOPE_HEIGHT * sizeof(unsigned int));
+        pixel = 0xFF000000;
+        for (i = 0; i < OSCOPE_WIDTH * OSCOPE_HEIGHT; i++)
+          pixels[i] = pixel;
         vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
         cxt->r += cxt->rInc;
         if (cxt->r < 64 || cxt->r > 250)
