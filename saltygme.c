@@ -447,9 +447,9 @@ static void ReadCallback(void* user_data, int32_t result)
     return;
 
   /* data has been transferred to buffer; check if more is on the way */
-  cxt->networkBufferPtr += result;
   if (result > 0)
   {
+    cxt->networkBufferPtr += result;
     /* is a bigger buffer needed? */
     if (cxt->networkBufferPtr >= cxt->networkBufferSize)
     {
@@ -620,6 +620,9 @@ static void ReadCallback(void* user_data, int32_t result)
     /* signal the web page that the load was successful */
     var_result = AllocateVarFromCStr("songLoaded:1");
     g_messaging_if->PostMessage(cxt->instance, var_result);
+cxt->currentTrack = 0;
+StartTrack(cxt);
+cxt->startPlaying = 1;
   }
 }
 
@@ -658,6 +661,7 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   int i;
   PP_Resource songRequest;
   struct PP_Var urlProperty;
+  int urlPropertySeen = 0;
   struct PP_Var getVar = AllocateVarFromCStr("GET");
   struct PP_CompletionCallback OpenCallback;
   int32_t ret;
@@ -670,7 +674,10 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   for (i = 0; i < argc; i++)
   {
     if (strcmp(argn[i], "songurl") == 0)
+    {
       urlProperty = AllocateVarFromCStr(argv[i]);
+      urlPropertySeen = 1;
+    }
   }
 
   /* prepare audio interface */
@@ -684,16 +691,19 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   if (!cxt->audioHandle)
     return PP_FALSE;
 
-  /* obtained song URL; now load it */
-  cxt->songLoader = g_urlloader_if->Create(instance);
+  /* if song URL was obtained, start loading */
+  if (urlPropertySeen)
+  {
+    cxt->songLoader = g_urlloader_if->Create(instance);
 
-  songRequest = g_urlrequestinfo_if->Create(instance);
-  g_urlrequestinfo_if->SetProperty(songRequest, PP_URLREQUESTPROPERTY_URL, urlProperty);
-  g_urlrequestinfo_if->SetProperty(songRequest, PP_URLREQUESTPROPERTY_METHOD, getVar);
+    songRequest = g_urlrequestinfo_if->Create(instance);
+    g_urlrequestinfo_if->SetProperty(songRequest, PP_URLREQUESTPROPERTY_URL, urlProperty);
+    g_urlrequestinfo_if->SetProperty(songRequest, PP_URLREQUESTPROPERTY_METHOD, getVar);
 
-  OpenCallback.func = OpenComplete;
-  OpenCallback.user_data = cxt;
-  ret = g_urlloader_if->Open(cxt->songLoader, songRequest, OpenCallback);
+    OpenCallback.func = OpenComplete;
+    OpenCallback.user_data = cxt;
+    ret = g_urlloader_if->Open(cxt->songLoader, songRequest, OpenCallback);
+  }
 
   return PP_TRUE;
 }
@@ -716,9 +726,26 @@ static void Instance_DidChangeFocus(PP_Instance instance,
 }
 
 static PP_Bool Instance_HandleDocumentLoad(PP_Instance instance,
-                                           PP_Resource url_loader) {
-  /* NaCl modules do not need to handle the document load function. */
-  return PP_FALSE;
+                                           PP_Resource url_loader)
+{
+  SaltyGmeContext *cxt = GetContext(instance);
+  struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
+  struct PP_Var var_result;
+
+  if (!cxt->networkBuffer)
+  {
+    cxt->networkBufferSize = BUFFER_INCREMENT;
+    cxt->networkBuffer = (unsigned char*)malloc(cxt->networkBufferSize);
+    if (!cxt->networkBuffer)
+    {
+      SONG_LOAD_FAILED(FAILURE_MEMORY);
+      return PP_FALSE;
+    }
+  }
+  g_urlloader_if->ReadResponseBody(url_loader, 
+    cxt->networkBuffer, cxt->networkBufferSize, readCallback);
+
+  return PP_TRUE;
 }
 
 void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
