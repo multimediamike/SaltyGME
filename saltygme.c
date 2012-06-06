@@ -626,19 +626,11 @@ cxt->startPlaying = 1;
   }
 }
 
-/* This is called when the Open() call gets header data from server */
-static void OpenComplete(void* user_data, int32_t result)
+/* Given a URL loader, start downloading. */
+static void StartDownload(SaltyGmeContext *cxt)
 {
-  SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
   struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
   struct PP_Var var_result;
-
-  /* this probably needs to be more graceful, but this is a good first cut */
-  if (result != 0)
-  {
-    SONG_LOAD_FAILED(FAILURE_NETWORK);
-    return;
-  }
 
   if (!cxt->networkBuffer)
   {
@@ -650,8 +642,24 @@ static void OpenComplete(void* user_data, int32_t result)
       return;
     }
   }
-  g_urlloader_if->ReadResponseBody(cxt->songLoader, 
+  g_urlloader_if->ReadResponseBody(cxt->songLoader,
     cxt->networkBuffer, cxt->networkBufferSize, readCallback);
+}
+
+/* This is called when the Open() call gets header data from server */
+static void OpenComplete(void* user_data, int32_t result)
+{
+  SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
+  struct PP_Var var_result;
+
+  /* this probably needs to be more graceful, but this is a good first cut */
+  if (result != 0)
+  {
+    SONG_LOAD_FAILED(FAILURE_NETWORK);
+    return;
+  }
+
+  StartDownload(cxt);
 }
 
 static PP_Bool Instance_DidCreate(PP_Instance instance,
@@ -726,24 +734,12 @@ static void Instance_DidChangeFocus(PP_Instance instance,
 }
 
 static PP_Bool Instance_HandleDocumentLoad(PP_Instance instance,
-                                           PP_Resource url_loader)
+                                           PP_Resource urlLoader)
 {
   SaltyGmeContext *cxt = GetContext(instance);
-  struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
-  struct PP_Var var_result;
 
-  if (!cxt->networkBuffer)
-  {
-    cxt->networkBufferSize = BUFFER_INCREMENT;
-    cxt->networkBuffer = (unsigned char*)malloc(cxt->networkBufferSize);
-    if (!cxt->networkBuffer)
-    {
-      SONG_LOAD_FAILED(FAILURE_MEMORY);
-      return PP_FALSE;
-    }
-  }
-  g_urlloader_if->ReadResponseBody(url_loader, 
-    cxt->networkBuffer, cxt->networkBufferSize, readCallback);
+  cxt->songLoader = urlLoader;
+  StartDownload(cxt);
 
   return PP_TRUE;
 }
