@@ -32,6 +32,8 @@
 #include "gme-source/gme.h"
 #include "xz-embedded/xz.h"
 
+#include "loading-song.xbm"
+
 static PP_Module module_id = 0;
 static struct PPB_Audio *g_audio_if = NULL;
 static struct PPB_AudioConfig *g_audioconfig_if = NULL;
@@ -97,6 +99,7 @@ typedef struct
   unsigned char *networkBuffer;
   int networkBufferSize;
   int networkBufferPtr;
+  int isLoaded;      /* indicates if the file is finished loading yet */
 
   /* audio playback */
   unsigned char *dataBuffer;
@@ -124,6 +127,7 @@ typedef struct
   uint8_t r, g, b;
   int rInc, gInc, bInc;
   int vizEnabled;
+  int fadeOutFrames; /* the number of loading frames to display after load */
 } SaltyGmeContext;
 
 /* for mapping { PP_Instance, SaltyGmeContext } */
@@ -159,6 +163,7 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->networkBuffer = NULL;
   cxt->networkBufferSize = 0;
   cxt->networkBufferPtr = 0;
+  cxt->isLoaded = 0;
   cxt->isPlaying = 0;
   cxt->startPlaying = 0;
   cxt->instance = instance;
@@ -322,6 +327,36 @@ static void StartTrack(SaltyGmeContext *cxt)
       gme_mute_voice(cxt->emu, i, cxt->voiceMuted[i]);
 }
 
+static void DrawLoadingFrame(uint32_t *pixels, uint32_t blackPixel,
+  uint32_t loadingPixel, uint32_t whitePixel)
+{
+  uint32_t pixelPtr = 0;
+  int i;
+  int mask;
+  unsigned char currentByte;
+
+  for (i = 0; i < OSCOPE_WIDTH * OSCOPE_HEIGHT / 8; i++)
+  {
+    currentByte = loading_song_bits[i];
+    if (currentByte == 0xFF)
+    {
+      pixels[pixelPtr + 0] = blackPixel; pixels[pixelPtr + 1] = blackPixel;
+      pixels[pixelPtr + 2] = blackPixel; pixels[pixelPtr + 3] = blackPixel;
+      pixels[pixelPtr + 4] = blackPixel; pixels[pixelPtr + 5] = blackPixel;
+      pixels[pixelPtr + 6] = blackPixel; pixels[pixelPtr + 7] = blackPixel;
+      pixelPtr += 8;
+    }
+    else
+    {
+      for (mask = 0x01; mask <= 0x80; mask <<= 1)
+        if (currentByte & mask)
+          pixels[pixelPtr++] = blackPixel;
+        else
+          pixels[pixelPtr++] = whitePixel;
+    }
+  }
+}
+
 static void TimerCallback(void* user_data, int32_t result)
 {
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
@@ -333,8 +368,20 @@ static void TimerCallback(void* user_data, int32_t result)
   struct PP_Point topLeft;
   short *vizBuffer;
   int samplesToGenerate;
+  unsigned char progressShade;
+  unsigned char textShade;
 
-  if (cxt->isPlaying || cxt->startPlaying)
+  if (!cxt->isLoaded && GetMillisecondsCount(cxt) >= (1000 / FRAME_RATE))
+  {
+    ResetMillisecondsCount(cxt);
+    DrawLoadingFrame(g_imagedata_if->Map(cxt->oscopeData),
+      0xFF000000, 0xFF808080, 0xFFFFFFFF);
+    topLeft.x = 0;
+    topLeft.y = 0;
+    g_graphics2d_if->PaintImageData(cxt->graphics2d, cxt->oscopeData, &topLeft, NULL);
+    g_graphics2d_if->Flush(cxt->graphics2d, flushCallback);
+  }
+  else if (cxt->isPlaying || cxt->startPlaying)
   {
     if (cxt->startPlaying)
     {
@@ -385,12 +432,29 @@ static void TimerCallback(void* user_data, int32_t result)
     /* check if it's time to update the visualization */
     if (GetMillisecondsCount(cxt) >= cxt->msToUpdateVideo)
     {
+      pixels = g_imagedata_if->Map(cxt->oscopeData);
+
+      /* display fade-out effect */
+      if (cxt->fadeOutFrames)
+      {
+        progressShade = cxt->fadeOutFrames * 4;
+        textShade = cxt->fadeOutFrames * 8;
+        DrawLoadingFrame(pixels,
+          0xFF000000,
+          0xFF000000 | (progressShade << 16) | (progressShade << 8) | progressShade,
+          0xFF000000 | (textShade << 16) | (textShade << 8) | textShade);
+        cxt->fadeOutFrames--;
+      }
+
       if (cxt->vizEnabled)
       {
-        pixels = g_imagedata_if->Map(cxt->oscopeData);
-        pixel = 0xFF000000;
-        for (i = 0; i < OSCOPE_WIDTH * OSCOPE_HEIGHT; i++)
-          pixels[i] = pixel;
+        /* the fade-out effect takes care of clearing the frame when active */
+        if (!cxt->fadeOutFrames)
+        {
+          pixel = 0xFF000000;
+          for (i = 0; i < OSCOPE_WIDTH * OSCOPE_HEIGHT; i++)
+            pixels[i] = pixel;
+        }
         vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
         cxt->r += cxt->rInc;
         if (cxt->r < 64 || cxt->r > 250)
@@ -433,10 +497,8 @@ static void ReadCallback(void* user_data, int32_t result)
 {
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
   struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
-  struct PP_CompletionCallback timerCallback = { TimerCallback, cxt };
   void *temp;
   struct PP_Var var_result;
-  struct PP_Size graphics_size;
   enum xz_ret ret;
   struct xz_dec *xz;
   struct xz_buf buf;
@@ -601,25 +663,13 @@ static void ReadCallback(void* user_data, int32_t result)
       return;
     }
 
-    /* initialize the graphics */
-    graphics_size.width = OSCOPE_WIDTH;
-    graphics_size.height = OSCOPE_HEIGHT;
-    cxt->graphics2d = g_graphics2d_if->Create(cxt->instance, &graphics_size, PP_TRUE);
-    g_instance_if->BindGraphics(cxt->instance, cxt->graphics2d);
-
-    cxt->oscopeData = g_imagedata_if->Create(
-      cxt->instance,
-      g_imagedata_if->GetNativeImageDataFormat(),
-      &graphics_size,
-      PP_TRUE
-    );
-
-    /* start the timer immediately */
-    g_core_if->CallOnMainThread(0, timerCallback, 0);
-
     /* signal the web page that the load was successful */
     var_result = AllocateVarFromCStr("songLoaded:1");
     g_messaging_if->PostMessage(cxt->instance, var_result);
+
+    cxt->isLoaded = 1;
+    cxt->fadeOutFrames = 31;
+
 cxt->currentTrack = 0;
 StartTrack(cxt);
 cxt->startPlaying = 1;
@@ -646,6 +696,29 @@ static void StartDownload(SaltyGmeContext *cxt)
     cxt->networkBuffer, cxt->networkBufferSize, readCallback);
 }
 
+static void InitGraphics(SaltyGmeContext *cxt)
+{
+  struct PP_Size graphics_size;
+  struct PP_CompletionCallback timerCallback = { TimerCallback, cxt };
+
+  /* initialize the graphics */
+  graphics_size.width = OSCOPE_WIDTH;
+  graphics_size.height = OSCOPE_HEIGHT;
+  cxt->graphics2d = g_graphics2d_if->Create(cxt->instance, &graphics_size, PP_TRUE);
+  g_instance_if->BindGraphics(cxt->instance, cxt->graphics2d);
+
+  cxt->oscopeData = g_imagedata_if->Create(
+    cxt->instance,
+    g_imagedata_if->GetNativeImageDataFormat(),
+    &graphics_size,
+    PP_TRUE
+  );
+
+  /* start the timer immediately */
+  ResetMillisecondsCount(cxt);
+  g_core_if->CallOnMainThread(0, timerCallback, 0);
+}
+
 /* This is called when the Open() call gets header data from server */
 static void OpenComplete(void* user_data, int32_t result)
 {
@@ -658,6 +731,8 @@ static void OpenComplete(void* user_data, int32_t result)
     SONG_LOAD_FAILED(FAILURE_NETWORK);
     return;
   }
+
+  InitGraphics(cxt);
 
   StartDownload(cxt);
 }
@@ -737,6 +812,8 @@ static PP_Bool Instance_HandleDocumentLoad(PP_Instance instance,
                                            PP_Resource urlLoader)
 {
   SaltyGmeContext *cxt = GetContext(instance);
+
+  InitGraphics(cxt);
 
   cxt->songLoader = urlLoader;
   StartDownload(cxt);
