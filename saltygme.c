@@ -689,10 +689,6 @@ static void ReadCallback(void* user_data, int32_t result)
 
     cxt->isLoaded = 1;
     cxt->fadeOutFrames = 31;
-
-cxt->currentTrack = 0;
-StartTrack(cxt);
-cxt->startPlaying = 1;
   }
 }
 
@@ -787,7 +783,7 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
 
   for (i = 0; i < argc; i++)
   {
-    if (strcmp(argn[i], "songurl") == 0)
+    if (strcmp(argn[i], "src") == 0)
     {
       urlProperty = AllocateVarFromCStr(argv[i]);
       urlPropertySeen = 1;
