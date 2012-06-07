@@ -76,6 +76,8 @@ static const char* const kTrackCountId = "trackCount";
 static const char* const kCurrentTrackId = "currentTrack";
 static const char* const kGetVoicesId = "getVoices";
 
+static const char ContentLengthString[] = "Content-Length: ";
+
 /* things that can go wrong */
 #define FAILURE_MEMORY 1
 #define FAILURE_DECOMPRESS 2
@@ -100,6 +102,7 @@ typedef struct
   int networkBufferSize;
   int networkBufferPtr;
   int isLoaded;      /* indicates if the file is finished loading yet */
+  int contentLength;
 
   /* audio playback */
   unsigned char *dataBuffer;
@@ -328,31 +331,46 @@ static void StartTrack(SaltyGmeContext *cxt)
 }
 
 static void DrawLoadingFrame(uint32_t *pixels, uint32_t blackPixel,
-  uint32_t loadingPixel, uint32_t whitePixel)
+  uint32_t loadingPixel, uint32_t whitePixel, int percentComplete)
 {
-  uint32_t pixelPtr = 0;
+  uint32_t pixelPtr;
+  int x, y;
   int i;
-  int mask;
-  unsigned char currentByte;
+  unsigned char mask;
+  unsigned char currentByte = 0;
+  int progressLimit;
 
-  for (i = 0; i < OSCOPE_WIDTH * OSCOPE_HEIGHT / 8; i++)
+  if (percentComplete < 0)
+    percentComplete = 0;
+  else if (percentComplete > 100)
+    percentComplete = 100;
+
+  progressLimit = (OSCOPE_WIDTH - 1) * percentComplete / 100;
+
+  mask = 0;
+  i = 0;
+  for (y = 0; y < OSCOPE_HEIGHT; y++)
   {
-    currentByte = loading_song_bits[i];
-    if (currentByte == 0xFF)
+    pixelPtr = y * OSCOPE_WIDTH;
+    for (x = 0; x < OSCOPE_WIDTH; x++)
     {
-      pixels[pixelPtr + 0] = blackPixel; pixels[pixelPtr + 1] = blackPixel;
-      pixels[pixelPtr + 2] = blackPixel; pixels[pixelPtr + 3] = blackPixel;
-      pixels[pixelPtr + 4] = blackPixel; pixels[pixelPtr + 5] = blackPixel;
-      pixels[pixelPtr + 6] = blackPixel; pixels[pixelPtr + 7] = blackPixel;
-      pixelPtr += 8;
-    }
-    else
-    {
-      for (mask = 0x01; mask <= 0x80; mask <<= 1)
-        if (currentByte & mask)
+      if (!mask)
+      {
+        currentByte = loading_song_bits[i++];
+        mask = 0x01;
+      }
+
+      if (currentByte & mask)
+      {
+        if (x >= progressLimit)
           pixels[pixelPtr++] = blackPixel;
         else
-          pixels[pixelPtr++] = whitePixel;
+          pixels[pixelPtr++] = loadingPixel;
+      }
+      else
+        pixels[pixelPtr++] = whitePixel;
+
+      mask <<= 1;
     }
   }
 }
@@ -375,7 +393,8 @@ static void TimerCallback(void* user_data, int32_t result)
   {
     ResetMillisecondsCount(cxt);
     DrawLoadingFrame(g_imagedata_if->Map(cxt->oscopeData),
-      0xFF000000, 0xFF808080, 0xFFFFFFFF);
+      0xFF000000, 0xFF808080, 0xFFFFFFFF,
+      cxt->networkBufferPtr * 100 / cxt->contentLength);
     topLeft.x = 0;
     topLeft.y = 0;
     g_graphics2d_if->PaintImageData(cxt->graphics2d, cxt->oscopeData, &topLeft, NULL);
@@ -442,7 +461,8 @@ static void TimerCallback(void* user_data, int32_t result)
         DrawLoadingFrame(pixels,
           0xFF000000,
           0xFF000000 | (progressShade << 16) | (progressShade << 8) | progressShade,
-          0xFF000000 | (textShade << 16) | (textShade << 8) | textShade);
+          0xFF000000 | (textShade << 16) | (textShade << 8) | textShade,
+          100);
         cxt->fadeOutFrames--;
       }
 
@@ -681,6 +701,17 @@ static void StartDownload(SaltyGmeContext *cxt)
 {
   struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
   struct PP_Var var_result;
+  struct PP_Var httpHeadersVar;
+  PP_Resource songResponse;
+  char *httpHeadersStr;
+
+  /* get the size of the download as reported by Content-Length: */
+  songResponse = g_urlloader_if->GetResponseInfo(cxt->songLoader);
+  httpHeadersVar = g_urlresponseinfo_if->GetProperty(songResponse,
+    PP_URLRESPONSEPROPERTY_HEADERS);
+  httpHeadersStr = AllocateCStrFromVar(httpHeadersVar);
+  cxt->contentLength = atoi(strstr(httpHeadersStr, ContentLengthString) +
+    strlen(ContentLengthString));
 
   if (!cxt->networkBuffer)
   {
