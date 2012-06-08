@@ -95,6 +95,7 @@ typedef struct
   int specialContainer;  /* indicates special handling for a .gamemusic container */
   uint32_t containerTrackOffsets[CONTAINER_MAX_TRACKS];
   uint32_t containerTrackSizes[CONTAINER_MAX_TRACKS];
+  struct PP_Var nextTrackCommand;
 
   /* network resource */
   PP_Resource songLoader;
@@ -121,6 +122,8 @@ typedef struct
   unsigned int audioStart;
   unsigned int audioEnd;
   int voiceMuted[MAX_VOICES];
+  int secondCounter;  /* set to framerate, dec on each frame, fire on 0 */
+  int currentTrackLength;
 
   /* graphics */
   PP_Resource graphics2d;
@@ -148,6 +151,9 @@ typedef struct
 #define MAX_INSTANCES 5
 static InstanceContextMap g_instanceContextMap[MAX_INSTANCES];
 static int g_instanceContextMapSize = 0;
+
+static struct PP_Var AllocateVarFromCStr(const char*);
+void Messaging_HandleMessage(PP_Instance, struct PP_Var);
 
 static PP_Bool InitContext(PP_Instance instance)
 {
@@ -178,6 +184,8 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->gInc = -3;
   cxt->bInc = -4;
   cxt->vizEnabled = 1;
+  cxt->secondCounter = FRAME_RATE;
+  cxt->nextTrackCommand = AllocateVarFromCStr(kNextTrackId);
 
   if (pthread_mutex_init(&cxt->audioMutex, NULL) != 0)
     return PP_FALSE;
@@ -309,6 +317,7 @@ static void StartTrack(SaltyGmeContext *cxt)
 {
   int i;
   int voiceCount;
+  gme_info_t *info;
 
   if (cxt->specialContainer)
   {
@@ -322,6 +331,11 @@ static void StartTrack(SaltyGmeContext *cxt)
   {
     gme_start_track(cxt->emu, cxt->currentTrack);
   }
+
+  /* get the track length */
+  gme_track_info(cxt->emu, &info, 0);
+  cxt->currentTrackLength = info->length;
+  gme_free_info(info);
 
   /* mute states propagate across tracks */
   voiceCount = gme_voice_count(cxt->emu);
@@ -388,6 +402,8 @@ static void TimerCallback(void* user_data, int32_t result)
   int samplesToGenerate;
   unsigned char progressShade;
   unsigned char textShade;
+  struct PP_Var var_result;
+  char result_string[MAX_RESULT_STR_LEN];
 
   if (!cxt->isLoaded && GetMillisecondsCount(cxt) >= (1000 / FRAME_RATE))
   {
@@ -507,8 +523,23 @@ static void TimerCallback(void* user_data, int32_t result)
       }
 
       cxt->msToUpdateVideo = ++cxt->frameCounter * 1000 / FRAME_RATE;
+      cxt->secondCounter--;
     }
   }
+
+  /* send a new time every second */
+  if (!cxt->secondCounter)
+  {
+    cxt->secondCounter = FRAME_RATE;
+    snprintf(result_string, MAX_RESULT_STR_LEN, "time:%d,%d",
+      gme_tell(cxt->emu) / 1000, cxt->currentTrackLength / 1000);
+    var_result = AllocateVarFromCStr(result_string);
+    g_messaging_if->PostMessage(cxt->instance, var_result);
+  }
+
+  /* check if it's time to move to the next track */
+  if (gme_tell(cxt->emu) >= cxt->currentTrackLength)
+    Messaging_HandleMessage(cxt->instance, cxt->nextTrackCommand);
 
   g_core_if->CallOnMainThread(5, timerCallback, 0);
 }
