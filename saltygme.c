@@ -52,7 +52,8 @@ static struct PPB_Var* g_var_if = NULL;
 #define OSCOPE_HEIGHT 256
 #define FREQUENCY 44100
 #define MAX_RESULT_STR_LEN 100
-#define BUFFER_INCREMENT (1024 * 1024 * 10)
+//#define BUFFER_INCREMENT (1024 * 1024 * 10)
+#define BUFFER_INCREMENT 1024
 #define CHANNELS 2
 #define BUFFER_SIZE (FREQUENCY * CHANNELS)
 
@@ -538,7 +539,7 @@ static void TimerCallback(void* user_data, int32_t result)
   }
 
   /* check if it's time to move to the next track */
-  if (gme_tell(cxt->emu) >= cxt->currentTrackLength)
+  if (cxt->isPlaying && gme_tell(cxt->emu) >= cxt->currentTrackLength)
     Messaging_HandleMessage(cxt->instance, cxt->nextTrackCommand);
 
   g_core_if->CallOnMainThread(5, timerCallback, 0);
