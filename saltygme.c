@@ -326,14 +326,15 @@ static void StartTrack(SaltyGmeContext *cxt)
     gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[i]],
       cxt->containerTrackSizes[i], &cxt->emu, FREQUENCY);
     gme_start_track(cxt->emu, 0);
+    gme_track_info(cxt->emu, &info, 0);
   }
   else
   {
     gme_start_track(cxt->emu, cxt->currentTrack);
+    gme_track_info(cxt->emu, &info, cxt->currentTrack);
   }
 
   /* get the track length */
-  gme_track_info(cxt->emu, &info, 0);
   cxt->currentTrackLength = info->length;
   gme_free_info(info);
 
