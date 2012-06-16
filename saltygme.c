@@ -528,10 +528,10 @@ static void TimerCallback(void* user_data, int32_t result)
     }
   }
 
-  /* send a new time every second */
+  /* send a new time every 1/2 second */
   if (!cxt->secondCounter)
   {
-    cxt->secondCounter = FRAME_RATE;
+    cxt->secondCounter = FRAME_RATE / 2;
     snprintf(result_string, MAX_RESULT_STR_LEN, "time:%d,%d",
       gme_tell(cxt->emu) / 1000, cxt->currentTrackLength / 1000);
     var_result = AllocateVarFromCStr(result_string);
