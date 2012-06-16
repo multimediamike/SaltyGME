@@ -335,7 +335,7 @@ static void StartTrack(SaltyGmeContext *cxt)
   }
 
   /* get the track length */
-  cxt->currentTrackLength = info->length;
+  cxt->currentTrackLength = info->play_length;
   gme_free_info(info);
 
   /* mute states propagate across tracks */
