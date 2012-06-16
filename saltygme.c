@@ -133,6 +133,7 @@ typedef struct
   uint8_t r, g, b;
   int rInc, gInc, bInc;
   int vizEnabled;
+  int disableViz;  /* this is a signal to disable the viz (blank the viz first) */
   int fadeOutFrames; /* the number of loading frames to display after load */
 } SaltyGmeContext;
 
@@ -183,6 +184,7 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->rInc = -2;
   cxt->gInc = -3;
   cxt->bInc = -4;
+  cxt->disableViz = 0;
   cxt->vizEnabled = 1;
   cxt->secondCounter = FRAME_RATE;
   cxt->nextTrackCommand = AllocateVarFromCStr(kNextTrackId);
@@ -390,6 +392,14 @@ static void DrawLoadingFrame(uint32_t *pixels, uint32_t blackPixel,
   }
 }
 
+/* plots all black pixels in a frame */
+static void ClearFrame(uint32_t *pixels)
+{
+  int i;
+  for (i = 0; i < OSCOPE_WIDTH * OSCOPE_HEIGHT; i++)
+    pixels[i] = 0xFF000000;
+}
+
 static void TimerCallback(void* user_data, int32_t result)
 {
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
@@ -483,15 +493,16 @@ static void TimerCallback(void* user_data, int32_t result)
         cxt->fadeOutFrames--;
       }
 
+      /* If the signal to disable viz was received, draw one black frame
+       * before disabling */
+      if (cxt->disableViz)
+        ClearFrame(pixels);
+
       if (cxt->vizEnabled)
       {
         /* the fade-out effect takes care of clearing the frame when active */
         if (!cxt->fadeOutFrames)
-        {
-          pixel = 0xFF000000;
-          for (i = 0; i < OSCOPE_WIDTH * OSCOPE_HEIGHT; i++)
-            pixels[i] = pixel;
-        }
+          ClearFrame(pixels);
         vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
         cxt->r += cxt->rInc;
         if (cxt->r < 64 || cxt->r > 250)
@@ -510,7 +521,10 @@ static void TimerCallback(void* user_data, int32_t result)
           else        /* left channel data */
             pixels[OSCOPE_WIDTH * (64 - (vizBuffer[i] / 512)) + (i >> 1)] = pixel;
         }
+      }
 
+      if (cxt->vizEnabled || cxt->disableViz)
+      {
         /* white bar in the middle */
         pixels = g_imagedata_if->Map(cxt->oscopeData);
         pixels += OSCOPE_WIDTH * OSCOPE_HEIGHT / 2;
@@ -521,6 +535,8 @@ static void TimerCallback(void* user_data, int32_t result)
         topLeft.y = 0;
         g_graphics2d_if->PaintImageData(cxt->graphics2d, cxt->oscopeData, &topLeft, NULL);
         g_graphics2d_if->Flush(cxt->graphics2d, flushCallback);
+
+        cxt->disableViz = 0;  /* clear the signal */
       }
 
       cxt->msToUpdateVideo = ++cxt->frameCounter * 1000 / FRAME_RATE;
@@ -979,6 +995,7 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   else if (strncmp(message, kDisableVizId, strlen(kDisableVizId)) == 0)
   {
     cxt->vizEnabled = 0;
+    cxt->disableViz = 1;
   }
   else if (strncmp(message, kEnableVizId, strlen(kEnableVizId)) == 0)
   {
