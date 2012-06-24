@@ -29,8 +29,8 @@
 #include "ppapi/c/ppp_instance.h"
 #include "ppapi/c/ppp_messaging.h"
 
-#include "gme-source/gme.h"
 #include "xz-embedded/xz.h"
+#include "plugin-api.h"
 
 #include "loading-song.xbm"
 
@@ -50,11 +50,10 @@ static struct PPB_Var* g_var_if = NULL;
 #define FRAME_RATE 30
 #define OSCOPE_WIDTH  512
 #define OSCOPE_HEIGHT 256
-#define FREQUENCY 44100
 #define MAX_RESULT_STR_LEN 100
 #define BUFFER_INCREMENT (1024 * 1024 * 10)
 #define CHANNELS 2
-#define BUFFER_SIZE (FREQUENCY * CHANNELS)
+#define BUFFER_SIZE (MASTER_FREQUENCY * CHANNELS)
 
 #define CONTAINER_STRING "Game Music Files"
 #define CONTAINER_STRING_SIZE 16
@@ -84,6 +83,8 @@ static const char ContentLengthString[] = "Content-Length: ";
 #define FAILURE_CORRUPT_FILE 3
 #define FAILURE_NETWORK 4
 
+extern pluginInfo pluginGameMusicEmu;
+
 typedef struct
 {
   int failureState;  /* if this is non-zero, something went wrong and no
@@ -96,6 +97,10 @@ typedef struct
   uint32_t containerTrackOffsets[CONTAINER_MAX_TRACKS];
   uint32_t containerTrackSizes[CONTAINER_MAX_TRACKS];
   struct PP_Var nextTrackCommand;
+
+  /* player plugin */
+  pluginInfo *playerPlugin;
+  unsigned char *pluginContext;
 
   /* network resource */
   PP_Resource songLoader;
@@ -112,10 +117,7 @@ typedef struct
   PP_Resource audioConfig;
   PP_Resource audioHandle;
   int sampleCount;
-  Music_Emu *emu;
-  int currentTrack;
   int trackCount;
-  gme_info_t *metadata;
   int startPlaying;  /* indicates if the timer callback should start audio */
   int isPlaying;     /* indicates whether playback is currently occurring */
   short audioBuffer[BUFFER_SIZE];
@@ -124,6 +126,7 @@ typedef struct
   int voiceMuted[MAX_VOICES];
   int secondCounter;  /* set to framerate, dec on each frame, fire on 0 */
   int currentTrackLength;
+  int frameCountForCurrentTrack;
 
   /* graphics */
   PP_Resource graphics2d;
@@ -312,39 +315,24 @@ static void GraphicsFlushCallback(void* user_data, int32_t result)
 /* returns the track number suitable for the UI, i.e., offset from 1 */
 static int GetCurrentUITrack(SaltyGmeContext *cxt)
 {
-  return cxt->currentTrack + 1;
+  return cxt->playerPlugin->getCurrentTrack(cxt->pluginContext) + 1;
 }
 
-static void StartTrack(SaltyGmeContext *cxt)
+static void StartTrack(SaltyGmeContext *cxt, int trackNumber)
 {
   int i;
   int voiceCount;
-  gme_info_t *info;
 
-  if (cxt->specialContainer)
-  {
-    i = cxt->currentTrack;
-    gme_delete(cxt->emu);
-    gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[i]],
-      cxt->containerTrackSizes[i], &cxt->emu, FREQUENCY);
-    gme_start_track(cxt->emu, 0);
-    gme_track_info(cxt->emu, &info, 0);
-  }
-  else
-  {
-    gme_start_track(cxt->emu, cxt->currentTrack);
-    gme_track_info(cxt->emu, &info, cxt->currentTrack);
-  }
-
-  /* get the track length */
-  cxt->currentTrackLength = info->play_length;
-  gme_free_info(info);
+  cxt->playerPlugin->startTrack(cxt->pluginContext, trackNumber);
+  cxt->currentTrackLength = 30;
+  cxt->frameCountForCurrentTrack = 0;
 
   /* mute states propagate across tracks */
-  voiceCount = gme_voice_count(cxt->emu);
+  voiceCount = cxt->playerPlugin->getVoiceCount(cxt->pluginContext);
   for (i = 0; i < MAX_VOICES; i++)
     if (i < voiceCount)
-      gme_mute_voice(cxt->emu, i, cxt->voiceMuted[i]);
+      cxt->playerPlugin->setVoiceState(cxt->pluginContext, i,
+        cxt->voiceMuted[i]);
 }
 
 static void DrawLoadingFrame(uint32_t *pixels, uint32_t blackPixel,
@@ -449,22 +437,27 @@ static void TimerCallback(void* user_data, int32_t result)
 
         /* before the wraparound */
         samplesToGenerate = BUFFER_SIZE - (cxt->audioEnd % BUFFER_SIZE);
-        gme_play(cxt->emu, samplesToGenerate,
-          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
+        cxt->playerPlugin->generateStereoFrames(cxt->pluginContext,
+          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE],
+          samplesToGenerate);
         cxt->audioEnd += samplesToGenerate;
 
         /* after the wraparound */
         samplesToGenerate = cxt->sampleCount - samplesToGenerate;
-        gme_play(cxt->emu, samplesToGenerate,
-          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
+        cxt->playerPlugin->generateStereoFrames(cxt->pluginContext,
+          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE],
+          samplesToGenerate);
         cxt->audioEnd += samplesToGenerate;
       }
       else
       {
         /* simple, non-wraparound case */
-        gme_play(cxt->emu, cxt->sampleCount, &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE]);
+        cxt->playerPlugin->generateStereoFrames(cxt->pluginContext,
+          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE],
+          cxt->sampleCount);
         cxt->audioEnd += cxt->sampleCount;
       }
+      cxt->frameCountForCurrentTrack += cxt->sampleCount / 2;
     }
     pthread_mutex_unlock(&cxt->audioMutex);
 
@@ -548,15 +541,11 @@ static void TimerCallback(void* user_data, int32_t result)
   if (!cxt->secondCounter)
   {
     cxt->secondCounter = FRAME_RATE / 2;
-    snprintf(result_string, MAX_RESULT_STR_LEN, "time:%d,%d",
-      gme_tell(cxt->emu) / 1000, cxt->currentTrackLength / 1000);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "time:%d",
+      cxt->frameCountForCurrentTrack / MASTER_FREQUENCY);
     var_result = AllocateVarFromCStr(result_string);
     g_messaging_if->PostMessage(cxt->instance, var_result);
   }
-
-  /* check if it's time to move to the next track */
-  if (cxt->isPlaying && gme_tell(cxt->emu) >= cxt->currentTrackLength)
-    Messaging_HandleMessage(cxt->instance, cxt->nextTrackCommand);
 
   g_core_if->CallOnMainThread(5, timerCallback, 0);
 }
@@ -570,8 +559,7 @@ static void ReadCallback(void* user_data, int32_t result)
   enum xz_ret ret;
   struct xz_dec *xz;
   struct xz_buf buf;
-  gme_err_t status;
-  int i, j;
+  int i;
 
   if (cxt->failureState)
     return;
@@ -680,56 +668,27 @@ static void ReadCallback(void* user_data, int32_t result)
       cxt->networkBuffer = NULL;
     }
 
-    /* check for special container format */
-    if (strncmp((char*)cxt->dataBuffer, CONTAINER_STRING, CONTAINER_STRING_SIZE) == 0)
-    {
-      cxt->specialContainer = 1;
-      cxt->trackCount =
-        (cxt->dataBuffer[16] << 24) | (cxt->dataBuffer[17] << 16) |
-        (cxt->dataBuffer[18] <<  8) | (cxt->dataBuffer[19]);
-      j = 0;
-      /* load the offsets */
-      for (i = CONTAINER_STRING_SIZE + 4;
-           i < CONTAINER_STRING_SIZE + 4 + cxt->trackCount * 4;
-           i += 4)
-      {
-        cxt->containerTrackOffsets[j++] = 
-          (cxt->dataBuffer[i  ] << 24) | (cxt->dataBuffer[i+1] << 16) |
-          (cxt->dataBuffer[i+2] <<  8) | (cxt->dataBuffer[i+3]);
-      }
-      /* derive the sizes */
-      for (i = 0; i < cxt->trackCount - 1; i++)
-        cxt->containerTrackSizes[i] = 
-          cxt->containerTrackOffsets[i+1] - cxt->containerTrackOffsets[i];
-      /* special case for last size */
-      cxt->containerTrackSizes[i] =
-        cxt->dataBufferPtr - cxt->containerTrackOffsets[i];
-    }
-    else
-      cxt->specialContainer = 0;
 
-    cxt->currentTrack = 0;
-
-    if (cxt->specialContainer)
-      status = gme_open_data(&cxt->dataBuffer[cxt->containerTrackOffsets[0]],
-        cxt->containerTrackSizes[0], &cxt->emu, FREQUENCY);
-    else
+    /* select the audio plugin */
+    cxt->playerPlugin = &pluginGameMusicEmu;
+    cxt->pluginContext = (unsigned char *)malloc(cxt->playerPlugin->contextSize);
+    if (!cxt->pluginContext)
     {
-      status = gme_open_data(cxt->dataBuffer, cxt->dataBufferPtr, &cxt->emu, FREQUENCY);
-      if (!status)
-        cxt->trackCount = gme_track_count(cxt->emu);
+      SONG_LOAD_FAILED(FAILURE_MEMORY);
+      return;
     }
 
-    /* initial voice states */
-    for (i = 0; i < MAX_VOICES; i++)
-      cxt->voiceMuted[i] = 0;
-
-    if (status)
+    if (!cxt->playerPlugin->initPlugin(cxt->pluginContext, cxt->dataBuffer,
+      cxt->dataBufferPtr))
     {
       /* signal the web page that the load failed */
       SONG_LOAD_FAILED(FAILURE_CORRUPT_FILE);
       return;
     }
+
+    /* initial voice states */
+    for (i = 0; i < MAX_VOICES; i++)
+      cxt->voiceMuted[i] = 0;
 
     /* signal the web page that the load was successful */
     var_result = AllocateVarFromCStr("songLoaded:1");
@@ -839,8 +798,8 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   }
 
   /* prepare audio interface */
-  cxt->sampleCount = g_audioconfig_if->RecommendSampleFrameCount(FREQUENCY, 4096);
-  cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, FREQUENCY, cxt->sampleCount);
+  cxt->sampleCount = g_audioconfig_if->RecommendSampleFrameCount(MASTER_FREQUENCY, 4096);
+  cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, MASTER_FREQUENCY, cxt->sampleCount);
   cxt->sampleCount *= 2;
 
   if (!cxt->audioConfig)
@@ -923,16 +882,10 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
     g_audio_if->StopPlayback(cxt->audioHandle);
     cxt->isPlaying = 0;
     if (strncmp(message, kNextTrackId, strlen(kNextTrackId)) == 0)
-    {
-      cxt->currentTrack = (cxt->currentTrack + 1) % cxt->trackCount;
-    }
+      cxt->playerPlugin->nextTrack(cxt->pluginContext);
     else
-    {
-      cxt->currentTrack--;
-      if (cxt->currentTrack < 0)
-        cxt->currentTrack = cxt->trackCount - 1;
-    }
-    StartTrack(cxt);
+      cxt->playerPlugin->previousTrack(cxt->pluginContext);
+    StartTrack(cxt, -1);
     cxt->startPlaying = 1;
     snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
     var_result = AllocateVarFromCStr(result_string);
@@ -945,15 +898,9 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
     if ((strlen(message) >= str_len + 2) &&
         (message[str_len]) == ':')
     {
-      cxt->currentTrack = atoi(&message[str_len + 1]) - 1;
-      if (cxt->currentTrack < 0)
-        cxt->currentTrack = 0;
-      else if (cxt->currentTrack >= cxt->trackCount)
-        cxt->currentTrack = cxt->trackCount - 1;
-
       g_audio_if->StopPlayback(cxt->audioHandle);
       cxt->isPlaying = 0;
-      StartTrack(cxt);
+      StartTrack(cxt, atoi(&message[str_len + 1]) - 1);
       cxt->startPlaying = 1;
       snprintf(result_string, MAX_RESULT_STR_LEN, "currentTrack:%d", GetCurrentUITrack(cxt));
       var_result = AllocateVarFromCStr(result_string);
@@ -980,13 +927,15 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   }
   else if (strncmp(message, kGetVoicesId, strlen(kGetVoicesId)) == 0)
   {
-    snprintf(result_string, MAX_RESULT_STR_LEN, "voiceCount:%d", gme_voice_count(cxt->emu));
+    snprintf(result_string, MAX_RESULT_STR_LEN, "voiceCount:%d",
+      cxt->playerPlugin->getVoiceCount(cxt->pluginContext));
     var_result = AllocateVarFromCStr(result_string);
     g_messaging_if->PostMessage(cxt->instance, var_result);
-    for (i = 0; i < gme_voice_count(cxt->emu); i++)
+    for (i = 0; i < cxt->playerPlugin->getVoiceCount(cxt->pluginContext); i++)
     {
       snprintf(result_string, MAX_RESULT_STR_LEN, "voiceName:%d,%s",
-        i + 1, gme_voice_name(cxt->emu, i));
+        i + 1,
+        cxt->playerPlugin->getVoiceName(cxt->pluginContext, i));
       var_result = AllocateVarFromCStr(result_string);
       g_messaging_if->PostMessage(cxt->instance, var_result);
     }
@@ -1010,10 +959,12 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
         (message[str_len]) == ':')
     {
       voice = atoi(&message[str_len + 1]) - 1;
-      if (voice >= 0 && voice < gme_voice_count(cxt->emu))
+      if (voice >= 0 &&
+        voice < cxt->playerPlugin->getVoiceCount(cxt->pluginContext))
       {
         cxt->voiceMuted[voice] ^= 1;
-        gme_mute_voice(cxt->emu, voice, cxt->voiceMuted[voice]);
+        cxt->playerPlugin->setVoiceState(cxt->pluginContext, voice,
+          cxt->voiceMuted[voice]);
       }
     }
   }
