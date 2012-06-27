@@ -11,11 +11,16 @@ nacl_env = make_nacl_env.NaClEnvironment(
     nacl_platform=os.getenv('NACL_TARGET_PLATFORM'))
 
 nacl_env.Append(CPPFLAGS=['-Igme-source'])
+nacl_env.Append(CFLAGS=['-Izlib'])
 
 sources = ['saltygme.c',
+'plugin-libgme.c',
+'plugin-vio2sf.c',
+
 'xz-embedded/xz_crc32.c',
 'xz-embedded/xz_dec_lzma2.c',
 'xz-embedded/xz_dec_stream.c',
+
 'gme-source/Ay_Apu.cpp',
 'gme-source/Ay_Cpu.cpp',
 'gme-source/Ay_Emu.cpp',
@@ -60,7 +65,31 @@ sources = ['saltygme.c',
 'gme-source/Vgm_Emu.cpp',
 'gme-source/Vgm_Emu_Impl.cpp',
 'gme-source/Ym2413_Emu.cpp',
-'gme-source/Ym2612_Emu.cpp'
+'gme-source/Ym2612_Emu.cpp',
+
+'vio2sf/corlett.c',
+'vio2sf/vio2sf.c',
+'vio2sf/desmume/MMU.c',
+'vio2sf/desmume/mc.c',
+'vio2sf/desmume/thumb_instructions.c',
+'vio2sf/desmume/cp15.c',
+'vio2sf/desmume/FIFO.c',
+'vio2sf/desmume/arm_instructions.c',
+'vio2sf/desmume/GPU.c',
+'vio2sf/desmume/SPU.c',
+'vio2sf/desmume/armcpu.c',
+'vio2sf/desmume/bios.c',
+'vio2sf/desmume/matrix.c',
+'vio2sf/desmume/NDSSystem.c',
+
+'zlib/adler32.c',
+'zlib/crc32.c',
+'zlib/infback.c',
+'zlib/inffast.c',
+'zlib/inflate.c',
+'zlib/zutil.c',
+'zlib/inftrees.c',
+'zlib/uncompr.c',
 ]
 
 nacl_env.AllNaClModules(sources, 'saltygme')
