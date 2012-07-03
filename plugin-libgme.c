@@ -62,14 +62,6 @@ static int GmeInitPlugin(void *context, uint8_t *data, int size)
 
   gmeCxt->currentTrack = 0;
 
-#if 0
-superfluous since StartTrack is required before playback begins
-  if (gmeCxt->specialContainer)
-    status = gme_open_data(&gmeCxt->dataBuffer[gmeCxt->containerTrackOffsets[0]],
-      gmeCxt->containerTrackSizes[0], &gmeCxt->emu, MASTER_FREQUENCY);
-  else
-#endif
-
   gmeCxt->emu = NULL;
 
   if (!gmeCxt->specialContainer)
@@ -115,6 +107,7 @@ static int GmeStartTrack(void *context, int trackNumber)
   else
   {
     status = gme_start_track(gmeCxt->emu, i);
+    gmeCxt->voiceCount = gme_voice_count(gmeCxt->emu);
     if (status)
       return 0;
   }
