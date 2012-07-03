@@ -11,11 +11,22 @@ nacl_env = make_nacl_env.NaClEnvironment(
     nacl_platform=os.getenv('NACL_TARGET_PLATFORM'))
 
 nacl_env.Append(CPPFLAGS=['-Igme-source'])
+nacl_env.Append(CPPFLAGS=['-Ixz-embedded'])
+
+# needed for both vio2sf and aosdk
 nacl_env.Append(CFLAGS=['-Izlib'])
+
+# needed for aosdk
+nacl_env.Append(CFLAGS=['-Iaosdk'])
+nacl_env.Append(CFLAGS=['-DOSTYPE=linux'])
+nacl_env.Append(CFLAGS=['-DPATH_MAX=1024'])
+nacl_env.Append(CFLAGS=['-DHAS_PSXCPU=1'])
+nacl_env.Append(CFLAGS=['-DLSB_FIRST=1'])
 
 sources = ['saltygme.c',
 'plugin-libgme.c',
 'plugin-vio2sf.c',
+'plugin-aosdk.c',
 
 'xz-embedded/xz_crc32.c',
 'xz-embedded/xz_dec_lzma2.c',
@@ -81,6 +92,53 @@ sources = ['saltygme.c',
 'vio2sf/desmume/bios.c',
 'vio2sf/desmume/matrix.c',
 'vio2sf/desmume/NDSSystem.c',
+
+'aosdk/corlett.c',
+
+'aosdk/eng_dsf/eng_dsf.c',
+'aosdk/eng_dsf/dc_hw.c',
+'aosdk/eng_dsf/arm7.c',
+'aosdk/eng_dsf/arm7i.c',
+'aosdk/eng_dsf/aica.c',
+'aosdk/eng_dsf/aicadsp.c',
+#'aosdk/eng_dsf/aicalfo.c',
+#'aosdk/eng_dsf/arm7thumb.c',
+#'aosdk/eng_dsf/arm7memil.c',
+
+'aosdk/eng_ssf/scspdsp.c',
+'aosdk/eng_ssf/m68kopnz.c',
+'aosdk/eng_ssf/m68kcpu.c',
+'aosdk/eng_ssf/scsp.c',
+'aosdk/eng_ssf/sat_hw.c',
+'aosdk/eng_ssf/m68kops.c',
+'aosdk/eng_ssf/m68kopac.c',
+#'aosdk/eng_ssf/m68kmake.c',
+'aosdk/eng_ssf/eng_ssf.c',
+'aosdk/eng_ssf/m68kopdm.c',
+#'aosdk/eng_ssf/scsplfo.c',
+
+'aosdk/eng_psf/psx.c',
+'aosdk/eng_psf/eng_psf2.c',
+'aosdk/eng_psf/eng_psf.c',
+'aosdk/eng_psf/eng_spu.c',
+'aosdk/eng_psf/psx_hw.c',
+#'aosdk/eng_psf/peops2/adsr.c',
+#'aosdk/eng_psf/peops2/xa.c',
+'aosdk/eng_psf/peops2/spu.c',
+'aosdk/eng_psf/peops2/dma.c',
+#'aosdk/eng_psf/peops2/reverb.c',
+'aosdk/eng_psf/peops2/registers.c',
+#'aosdk/eng_psf/peops/adsr.c',
+'aosdk/eng_psf/peops/spu.c',
+#'aosdk/eng_psf/peops/dma.c',
+#'aosdk/eng_psf/peops/reverb.c',
+#'aosdk/eng_psf/peops/registers.c',
+
+#'aosdk/eng_qsf/qsound.c',
+#'aosdk/eng_qsf/kabuki.c',
+#'aosdk/eng_qsf/z80.c',
+#'aosdk/eng_qsf/z80dasm.c',
+#'aosdk/eng_qsf/eng_qsf.c',
 
 'zlib/adler32.c',
 'zlib/crc32.c',

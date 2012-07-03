@@ -81,6 +81,8 @@
 
 #define DECOMP_MAX_SIZE		((32 * 1024 * 1024) + 12)
 
+extern int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size, corlett_t **c);
+#if 0
 int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size, corlett_t **c)
 {
   uint32 *buf;
@@ -320,7 +322,10 @@ int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size,
   // Bingo
   return AO_SUCCESS;
 }
+#endif
 
+extern uint32 psfTimeToMS(char *str);
+#if 0
 uint32 psfTimeToMS(char *str)
 {
   int x, c=0;
@@ -371,3 +376,4 @@ uint32 psfTimeToMS(char *str)
   acc*=100;
   return(acc);
 }
+#endif

@@ -29,7 +29,7 @@
 #include "ppapi/c/ppp_instance.h"
 #include "ppapi/c/ppp_messaging.h"
 
-#include "xz-embedded/xz.h"
+#include "xz.h"
 #include "plugin-api.h"
 
 #include "loading-song.xbm"
@@ -84,6 +84,10 @@ static const char ContentLengthString[] = "Content-Length: ";
 #define FAILURE_NETWORK 4
 
 extern pluginInfo pluginGameMusicEmu;
+extern pluginInfo pluginVio2sf;
+extern pluginInfo pluginAosdkDSF;
+extern pluginInfo pluginAosdkPSF2;
+extern pluginInfo pluginAosdkSSF;
 
 typedef struct
 {
@@ -117,7 +121,6 @@ typedef struct
   PP_Resource audioConfig;
   PP_Resource audioHandle;
   int sampleCount;
-  int trackCount;
   int startPlaying;  /* indicates if the timer callback should start audio */
   int isPlaying;     /* indicates whether playback is currently occurring */
   short audioBuffer[BUFFER_SIZE];
@@ -125,7 +128,6 @@ typedef struct
   unsigned int audioEnd;
   int voiceMuted[MAX_VOICES];
   int secondCounter;  /* set to framerate, dec on each frame, fire on 0 */
-  int currentTrackLength;
   int frameCountForCurrentTrack;
 
   /* graphics */
@@ -172,7 +174,6 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt = &mapEntry->context;
 
   cxt->failureState = 0;
-  cxt->trackCount = 1;
   cxt->networkBuffer = NULL;
   cxt->networkBufferSize = 0;
   cxt->networkBufferPtr = 0;
@@ -324,7 +325,6 @@ static void StartTrack(SaltyGmeContext *cxt, int trackNumber)
   int voiceCount;
 
   cxt->playerPlugin->startTrack(cxt->pluginContext, trackNumber);
-  cxt->currentTrackLength = 30;
   cxt->frameCountForCurrentTrack = 0;
 
   /* mute states propagate across tracks */
@@ -425,6 +425,11 @@ static void TimerCallback(void* user_data, int32_t result)
       cxt->isPlaying = 1;
       cxt->audioStart = 0;
       cxt->audioEnd = 0;
+
+      pthread_mutex_lock(&cxt->audioMutex);
+      cxt->audioStart = 0;
+      cxt->audioEnd = 0;
+      pthread_mutex_unlock(&cxt->audioMutex);
     }
 
     /* check if it's time to generate more audio */
@@ -668,9 +673,6 @@ static void ReadCallback(void* user_data, int32_t result)
       cxt->networkBuffer = NULL;
     }
 
-
-    /* select the audio plugin */
-    cxt->playerPlugin = &pluginGameMusicEmu;
     cxt->pluginContext = (unsigned char *)malloc(cxt->playerPlugin->contextSize);
     if (!cxt->pluginContext)
     {
@@ -788,6 +790,7 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
     return PP_FALSE;
   cxt = GetContext(instance);
 
+  cxt->playerPlugin = NULL;
   for (i = 0; i < argc; i++)
   {
     if (strcmp(argn[i], "src") == 0)
@@ -795,7 +798,25 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
       urlProperty = AllocateVarFromCStr(argv[i]);
       urlPropertySeen = 1;
     }
+    else if (strcmp(argn[i], "system") == 0)
+    {
+      /* select the audio plugin */
+      if (strcmp(argv[i], "Sega Dreamcast") == 0)
+        cxt->playerPlugin = &pluginAosdkDSF;
+      else if (strcmp(argv[i], "Sony PlayStation 2") == 0)
+        cxt->playerPlugin = &pluginAosdkPSF2;
+      else if (strcmp(argv[i], "Sega Saturn") == 0)
+        cxt->playerPlugin = &pluginAosdkSSF;
+      else if (strcmp(argv[i], "Nintendo DS") == 0)
+        cxt->playerPlugin = &pluginVio2sf;
+      else
+        cxt->playerPlugin = &pluginGameMusicEmu;
+    }
   }
+
+  /* if no valid system was passed in, don't try to proceed */
+  if (!cxt->playerPlugin)
+    return PP_FALSE;
 
   /* prepare audio interface */
   cxt->sampleCount = g_audioconfig_if->RecommendSampleFrameCount(MASTER_FREQUENCY, 4096);
@@ -917,7 +938,8 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
   }
   else if (strncmp(message, kTrackCountId, strlen(kTrackCountId)) == 0)
   {
-    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d", cxt->trackCount);
+    snprintf(result_string, MAX_RESULT_STR_LEN, "trackCount:%d",
+      cxt->playerPlugin->getTrackCount(cxt->pluginContext));
     var_result = AllocateVarFromCStr(result_string);
   }
   else if (strncmp(message, kCurrentTrackId, strlen(kCurrentTrackId)) == 0)
