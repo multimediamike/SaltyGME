@@ -185,9 +185,9 @@ static PP_Bool InitContext(PP_Instance instance)
   cxt->audioEnd = 0;
 
   cxt->r = cxt->g = cxt->b = 250;
-  cxt->rInc = -2;
-  cxt->gInc = -3;
-  cxt->bInc = -4;
+  cxt->rInc = -1;
+  cxt->gInc = -2;
+  cxt->bInc = -3;
   cxt->disableViz = 0;
   cxt->vizEnabled = 1;
   cxt->secondCounter = FRAME_RATE;
