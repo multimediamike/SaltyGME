@@ -423,8 +423,6 @@ static void TimerCallback(void* user_data, int32_t result)
       cxt->frameCounter = 0;
       cxt->msToUpdateVideo = 0;  /* update video at relative MS tick 0 */
       cxt->isPlaying = 1;
-      cxt->audioStart = 0;
-      cxt->audioEnd = 0;
 
       pthread_mutex_lock(&cxt->audioMutex);
       cxt->audioStart = 0;
