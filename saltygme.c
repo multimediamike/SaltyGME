@@ -29,7 +29,7 @@
 #include "ppapi/c/ppp_instance.h"
 #include "ppapi/c/ppp_messaging.h"
 
-#include "xz.h"
+#include "xzdec.h"
 #include "plugin-api.h"
 
 #include "loading-song.xbm"
@@ -560,9 +560,6 @@ static void ReadCallback(void* user_data, int32_t result)
   struct PP_CompletionCallback readCallback = { ReadCallback, cxt };
   void *temp;
   struct PP_Var var_result;
-  enum xz_ret ret;
-  struct xz_dec *xz;
-  struct xz_buf buf;
   int i;
 
   if (cxt->failureState)
@@ -602,68 +599,14 @@ static void ReadCallback(void* user_data, int32_t result)
         (cxt->networkBuffer[3] == 'X') &&
         (cxt->networkBuffer[4] == 'Z'))
     {
-      buf.in = cxt->networkBuffer;
-      buf.in_pos = 0;
-      buf.in_size = cxt->networkBufferPtr;
-
-      cxt->dataBufferSize = BUFFER_INCREMENT;
-      cxt->dataBuffer = (unsigned char*)malloc(cxt->dataBufferSize);
-      if (!cxt->dataBuffer)
-      {
-        SONG_LOAD_FAILED(FAILURE_MEMORY);
-        return;
-      }
-
-      buf.out = cxt->dataBuffer;
-      buf.out_pos = 0;
-      buf.out_size = cxt->dataBufferSize;
-
-      xz_crc32_init();
-      xz = xz_dec_init(XZ_DYNALLOC, (uint32_t)-1);
-      if (!xz)
+      if (!xz_decompress(cxt->networkBuffer, cxt->networkBufferPtr,
+        &cxt->dataBuffer, &cxt->dataBufferPtr))
       {
         SONG_LOAD_FAILED(FAILURE_DECOMPRESS);
         return;
       }
-
-      do
-      {
-        ret = xz_dec_run(xz, &buf);
-        if (ret == XZ_OK)
-        {
-          /* things are okay, but more buffer space is needed */
-          cxt->dataBufferSize += BUFFER_INCREMENT;
-          temp = realloc(cxt->dataBuffer, cxt->dataBufferSize);
-          if (!temp)
-          {
-            SONG_LOAD_FAILED(FAILURE_MEMORY);
-            return;
-          }
-          else
-            cxt->dataBuffer = temp;
-          buf.out_size = cxt->dataBufferSize;
-          buf.out = cxt->dataBuffer;
-        }
-        else
-        {
-          /* any other status is an exit condition (either error or stream end) */
-          break;
-        }
-      } while (ret != XZ_STREAM_END);
-
-      if (ret == XZ_STREAM_END)
-      {
-          cxt->dataBufferPtr = buf.out_pos;
-      }
-      else
-      {
-        free(cxt->dataBuffer);
-        cxt->dataBufferPtr = 0;
-        SONG_LOAD_FAILED(FAILURE_DECOMPRESS);
-        return;
-      }
+      
       free(cxt->networkBuffer);
-      xz_dec_end(xz);
     }
     else
     {
@@ -788,6 +731,8 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
   if (!InitContext(instance))
     return PP_FALSE;
   cxt = GetContext(instance);
+
+  init_xz();
 
   cxt->playerPlugin = NULL;
   for (i = 0; i < argc; i++)

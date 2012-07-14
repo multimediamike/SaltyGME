@@ -28,6 +28,7 @@ sources = ['saltygme.c',
 'plugin-vio2sf.c',
 'plugin-aosdk.c',
 
+'xzdec.c',
 'xz-embedded/xz_crc32.c',
 'xz-embedded/xz_dec_lzma2.c',
 'xz-embedded/xz_dec_stream.c',
