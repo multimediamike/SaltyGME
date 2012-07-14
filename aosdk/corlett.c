@@ -78,10 +78,9 @@ The following data is optional and may be omitted:
 #include "corlett.h"
 
 #include <zlib.h>
-#include <xz.h>
+#include "../xzdec.h"
 
 #define DECOMP_MAX_SIZE		((32 * 1024 * 1024) + 12)
-#define XZ_BUFFER_INCREMENT (1024 * 1024)
 
 int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size, corlett_t **c)
 {
@@ -89,7 +88,7 @@ int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size,
 	uint32 res_area, comp_crc,  actual_crc;
 	uint8 *decomp_dat, *tag_dec;
 	uLongf decomp_length, comp_length;
-	int payload_type = 0;  // 0 = invalid; 1 = uncompresed; 2 = zlib; 3 = xz
+	int payload_type = 0;  // 0 = invalid; 1 = zlib; 2 = xz
 	
 	// 32-bit pointer to data
 	buf = (uint32 *)input;
@@ -97,11 +96,11 @@ int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size,
 	// Check we have a PSF format file.
 	if ((input[0] == 'P') && (input[1] == 'S') && (input[2] == 'F'))
 	{
-		payload_type = 2;
+		payload_type = 1;
 	}
 	else if ((input[0] == 'p') && (input[1] == 's') && (input[2] == 'f'))
 	{
-		payload_type = 3;
+		payload_type = 2;
 	}
 	else
 	{
@@ -113,7 +112,7 @@ int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size,
 	comp_length = LE32(buf[2]);
 	comp_crc = LE32(buf[3]);
 		
-	if (payload_type == 2 && comp_length > 0)
+	if (payload_type == 1 && comp_length > 0)
 	{
 		// Check length
 		if (input_len < comp_length + 16)
@@ -136,73 +135,19 @@ int corlett_decode(uint8 *input, uint32 input_len, uint8 **output, uint64 *size,
 		// Resize memory buffer to what we actually need
 		decomp_dat = realloc(decomp_dat, (size_t)decomp_length + 1);
 	}
-	if (payload_type == 3 && comp_length > 0)
+	if (payload_type == 2 && comp_length > 0)
 	{
-		enum xz_ret ret;
-		struct xz_dec *xz;
-		struct xz_buf xz_dec_buf;
-		uint8 *temp;
-
 		// Check CRC is correct
 		actual_crc = crc32(0, (unsigned char *)&buf[4+(res_area/4)], comp_length);
 		if (actual_crc != comp_crc)
 			return AO_FAIL;
 
-		// input params
-		xz_dec_buf.in = input + 16 + res_area;
-		xz_dec_buf.in_pos = 0;
-		xz_dec_buf.in_size = comp_length;
-
-		// output params
-		decomp_length = XZ_BUFFER_INCREMENT;
-		decomp_dat = malloc(decomp_length);
-		if (!decomp_dat)
-			return AO_FAIL;
-		xz_dec_buf.out = decomp_dat;
-		xz_dec_buf.out_pos = 0;
-		xz_dec_buf.out_size = decomp_length;
-
-		xz_crc32_init();
-		xz = xz_dec_init(XZ_DYNALLOC, (uint32_t)-1);
-		if (!xz)
-			return AO_FAIL;
-
-		do
-		{
-			ret = xz_dec_run(xz, &xz_dec_buf);
-			if (ret == XZ_OK)
-			{
-				/* things are okay, but more buffer space is needed */
-			        decomp_length += XZ_BUFFER_INCREMENT;
-				temp = realloc(decomp_dat, decomp_length);
-				if (!temp)
-					return AO_FAIL;
-				decomp_dat = temp;
-				xz_dec_buf.out_size = decomp_length;
-				xz_dec_buf.out = decomp_dat;
-			}
-			else
-			{
-				/* any other status is an exit condition (either error or stream end) */
-				break;
-			}
-		} while (ret != XZ_STREAM_END);
-
-		if (ret == XZ_STREAM_END)
-		{
-			// shorten the stream to the correct size
-			decomp_length = xz_dec_buf.out_pos;
-			temp = realloc(decomp_dat, decomp_length);
-			if (!temp)
-				return AO_FAIL;
-			decomp_dat = temp;
-		}
-		else
+		if (!xz_decompress(input + 16 + res_area, comp_length,
+			&decomp_dat, (int*)&decomp_length))
 		{
 			free(decomp_dat);
 			return AO_FAIL;
 		}
-		xz_dec_end(xz);
 	}
 	else
 	{
