@@ -178,6 +178,11 @@ static int AosdkStartTrackDSF(void *privateData, int trackNumber)
   return AosdkStartTrack(privateData, trackNumber, dsf_start);
 }
 
+static int AosdkStartTrackPSF(void *privateData, int trackNumber)
+{
+  return AosdkStartTrack(privateData, trackNumber, psf_start);
+}
+
 static int AosdkStartTrackPSF2(void *privateData, int trackNumber)
 {
   return AosdkStartTrack(privateData, trackNumber, psf2_start);
@@ -202,6 +207,12 @@ static int AosdkGenerateStereoFramesDSF(void *privateData, int16_t *samples,
   int frameCount)
 {
   return AosdkGenerateStereoFrames(privateData, samples, frameCount, dsf_gen);
+}
+
+static int AosdkGenerateStereoFramesPSF(void *privateData, int16_t *samples,
+  int frameCount)
+{
+  return AosdkGenerateStereoFrames(privateData, samples, frameCount, psf_gen);
 }
 
 static int AosdkGenerateStereoFramesPSF2(void *privateData, int16_t *samples,
@@ -274,6 +285,22 @@ pluginInfo pluginAosdkDSF =
   .initPlugin =           AosdkInitPlugin,
   .startTrack =           AosdkStartTrackDSF,
   .generateStereoFrames = AosdkGenerateStereoFramesDSF,
+  .getTrackCount =        AosdkGetTrackCount,
+  .getCurrentTrack =      AosdkGetCurrentTrack,
+  .nextTrack =            AosdkNextTrack,
+  .previousTrack =        AosdkPreviousTrack,
+  .getVoiceCount =        AosdkGetVoiceCount,
+  .getVoiceName =         AosdkGetVoiceName,
+  .voicesCanBeToggled =   AosdkVoicesCanBeToggled,
+  .setVoiceState =        AosdkSetVoiceState,
+  .contextSize =          sizeof(aosdkContext)
+};
+
+pluginInfo pluginAosdkPSF =
+{
+  .initPlugin =           AosdkInitPlugin,
+  .startTrack =           AosdkStartTrackPSF,
+  .generateStereoFrames = AosdkGenerateStereoFramesPSF,
   .getTrackCount =        AosdkGetTrackCount,
   .getCurrentTrack =      AosdkGetCurrentTrack,
   .nextTrack =            AosdkNextTrack,

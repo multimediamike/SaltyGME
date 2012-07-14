@@ -86,6 +86,7 @@ static const char ContentLengthString[] = "Content-Length: ";
 extern pluginInfo pluginGameMusicEmu;
 extern pluginInfo pluginVio2sf;
 extern pluginInfo pluginAosdkDSF;
+extern pluginInfo pluginAosdkPSF;
 extern pluginInfo pluginAosdkPSF2;
 extern pluginInfo pluginAosdkSSF;
 
@@ -801,6 +802,8 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
       /* select the audio plugin */
       if (strcmp(argv[i], "Sega Dreamcast") == 0)
         cxt->playerPlugin = &pluginAosdkDSF;
+      else if (strcmp(argv[i], "Sony PlayStation") == 0)
+        cxt->playerPlugin = &pluginAosdkPSF;
       else if (strcmp(argv[i], "Sony PlayStation 2") == 0)
         cxt->playerPlugin = &pluginAosdkPSF2;
       else if (strcmp(argv[i], "Sega Saturn") == 0)
