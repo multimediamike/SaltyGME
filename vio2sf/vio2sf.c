@@ -12,6 +12,8 @@
 #include "tagget.h"
 #include "vio2sf.h"
 
+#include "../xzdec.h"
+
 volatile BOOL execute = FALSE;
 
 static struct
@@ -124,53 +126,8 @@ static int load_mapz(int issave, unsigned char *zdata, unsigned zsize, unsigned 
   unsigned char *udata;
   unsigned char *rdata;
 
-  udata = malloc(usize);
-  if (!udata)
+  if (!xz_decompress(zdata, zsize, &rdata, &usize))
     return XSF_FALSE;
-
-  while (Z_OK != (zerr = uncompress(udata, &usize, zdata, zsize)))
-    {
-      if (Z_MEM_ERROR != zerr && Z_BUF_ERROR != zerr)
-	{
-	  free(udata);
-	  return XSF_FALSE;
-	}
-      if (usize >= 8)
-	{
-	  usize = getdwordle(udata + 4) + 8;
-	  if (usize < rsize)
-	    {
-	      rsize += rsize;
-	      usize = rsize;
-	    }
-	  else
-	    rsize = usize;
-	}
-      else
-	{
-	  rsize += rsize;
-	  usize = rsize;
-	}
-      free(udata);
-      udata = malloc(usize);
-      if (!udata)
-	return XSF_FALSE;
-    }
-
-  rdata = realloc(udata, usize);
-  if (!rdata)
-    {
-      free(udata);
-      return XSF_FALSE;
-    }
-
-  if (0)
-    {
-      unsigned ccrc = crc32(crc32(0L, Z_NULL, 0), rdata, usize);
-      if (ccrc != zcrc)
-	return XSF_FALSE;
-    }
-
   ret = load_map(issave, rdata, usize);
   free(rdata);
   return ret;
@@ -182,7 +139,9 @@ static int load_psf_one(unsigned char *pfile, unsigned bytes)
   unsigned code_size;
   unsigned resv_size;
   unsigned code_crc;
-  if (bytes < 16 || getdwordle(ptr) != 0x24465350)
+  // modified signature is 'psf' instead of 'PSF'
+//  if (bytes < 16 || getdwordle(ptr) != 0x24465350)
+  if (bytes < 16 || getdwordle(ptr) != 0x24667370)
     return XSF_FALSE;
 
   resv_size = getdwordle(ptr + 4);

@@ -127,8 +127,7 @@ static int TwosfStartTrack(void *privateData, int trackNumber)
   {
     memcpy(dataCopy, filePtr, fileSize);
     currentTwosfContext = cxt;
-    xsf_start(dataCopy, fileSize);
-    return 1;
+    return xsf_start(dataCopy, fileSize);
   }
   else
     return 0;

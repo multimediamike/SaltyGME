@@ -10,9 +10,16 @@ static int xsf_tagsearchraw(const char *pData, int dwSize)
 	int dwProgramLength;
 	int dwProgramCRC;
 	if (dwSize < 16 + 5 + 1) return 0;
+#if 0
 	if (pData[0] != 'P') return 0;
 	if (pData[1] != 'S') return 0;
 	if (pData[2] != 'F') return 0;
+#else
+        // modified (XZ-compressed) format
+	if (pData[0] != 'p') return 0;
+	if (pData[1] != 's') return 0;
+	if (pData[2] != 'f') return 0;
+#endif
 	dwReservedAreaSize = getdwordle(pData + 4);
 	dwProgramLength = getdwordle(pData + 8);
 	dwProgramCRC = getdwordle(pData + 12);
