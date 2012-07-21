@@ -53,5 +53,6 @@ void SPU_WriteLong(u32 addr, u32 val);
 u32 SPU_ReadLong(u32 addr);
 void SPU_Emulate(void);
 void SPU_EmulateSamples(u32 numsamples);
+void SPU_EnableChannel(int channel, int enabled);
 
 #endif

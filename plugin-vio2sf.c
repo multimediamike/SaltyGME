@@ -8,6 +8,7 @@
 #define CONTAINER_STRING "PSF Song Archive"
 #define CONTAINER_STRING_SIZE 16
 #define INDEX_RECORD_SIZE 12
+#define NDS_VOICE_COUNT 16
 
 typedef struct
 {
@@ -20,6 +21,25 @@ typedef struct
 
 /* obviously not thread-sade */
 static twosfContext *currentTwosfContext;
+
+static const char *channelStrings[NDS_VOICE_COUNT] = {
+  "ch 01",
+  "ch 02",
+  "ch 03",
+  "ch 04",
+  "ch 05",
+  "ch 06",
+  "ch 07",
+  "ch 08",
+  "ch 09",
+  "ch 10",
+  "ch 11",
+  "ch 12",
+  "ch 13",
+  "ch 14",
+  "ch 15",
+  "ch 16"
+};
 
 int xsf_get_lib(char *pfilename, void **ppbuffer, unsigned int *plength)
 {
@@ -175,24 +195,27 @@ static int TwosfPreviousTrack(void *privateData)
 
 static int TwosfGetVoiceCount(void *privateData)
 {
-  /* just claim that there is one master voice */
-  return 1;
+  return NDS_VOICE_COUNT;
 }
 
 static const char* TwosfGetVoiceName(void *privateData, int voiceNumber)
 {
-  return "Nintendo DS Audio";
+  if (voiceNumber >= 0 && voiceNumber < NDS_VOICE_COUNT)
+    return channelStrings[voiceNumber];
+  else
+    return NULL;
 }
 
 static int TwosfVoicesCanBeToggled(void *privateData)
 {
-  /* no, individual voices can not be toggled */
-  return 0;
+  return 1;
 }
 
 static int TwosfSetVoiceState(void *privateData, int voice, int enabled)
 {
-  return 0;
+  xsf_enable_channel(voice, !enabled);
+
+  return 1;
 }
 
 pluginInfo pluginVio2sf =

@@ -58,7 +58,7 @@ static struct PPB_Var* g_var_if = NULL;
 #define CONTAINER_STRING "Game Music Files"
 #define CONTAINER_STRING_SIZE 16
 #define CONTAINER_MAX_TRACKS 256
-#define MAX_VOICES 10
+#define MAX_VOICES 16
 
 /* functions callable from JS */
 static const char* const kSetTrackId = "setTrack";

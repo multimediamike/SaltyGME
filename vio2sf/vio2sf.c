@@ -857,6 +857,11 @@ int xsf_gen(void *pbuffer, unsigned samples)
   return ptr - (unsigned char *)pbuffer;
 }
 
+void xsf_enable_channel(int channel, int enabled)
+{
+  SPU_EnableChannel(channel, enabled);
+}
+
 void xsf_term(void)
 {
   MMU_unsetRom();

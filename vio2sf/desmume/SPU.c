@@ -62,6 +62,7 @@ typedef struct
 	s32 volumel;
 	s32 volumer;
 	s16 output;
+        int enabled;
 } SChannel;
 
 typedef struct
@@ -197,6 +198,7 @@ static void reset_channel(SChannel *ch, int id)
 {
 	ch->status = 0;
 	ch->id = id;
+	ch->enabled = 1;
 }
 
 void SPU_Reset(void)
@@ -856,7 +858,7 @@ void SPU_EmulateSamples(u32 numsamples)
 		memset(spu.pmixbuf, 0, spu.buflen * sizeof(s32));
 		for (i = 0; i < 16; i++)
 		{
-			if (ch->status)
+			if (ch->status && ch->enabled)
 			{
 				switch (ch->format)
 				{
@@ -885,6 +887,12 @@ void SPU_EmulateSamples(u32 numsamples)
 void SPU_Emulate(void)
 {
 	SPU_EmulateSamples(SNDCore->GetAudioSpace());
+}
+
+void SPU_EnableChannel(int channel, int enabled)
+{
+	if (channel >= 0 && channel < 16)
+		spu.ch[channel].enabled = enabled;
 }
 
 
