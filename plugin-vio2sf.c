@@ -157,7 +157,7 @@ static int TwosfGenerateStereoFrames(void *privateData, int16_t *samples, int fr
 {
   int status;
 
-  status = xsf_gen(samples, frameCount / 2);
+  status = xsf_gen(samples, frameCount);
 
   return (status == XSF_TRUE);
 }
