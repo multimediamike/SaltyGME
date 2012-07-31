@@ -7,6 +7,7 @@
 #define CONTAINER_STRING "Game Music Files"
 #define CONTAINER_STRING_SIZE 16
 #define CONTAINER_MAX_TRACKS 256
+#define SAMPLES_PER_FRAME 2
 
 typedef struct
 {
@@ -120,7 +121,7 @@ static int GmeGenerateStereoFrames(void *context, int16_t *samples, int frameCou
   gmeContext *gmeCxt = (gmeContext*)context;
   gme_err_t status;
 
-  status = gme_play(gmeCxt->emu, frameCount, samples);
+  status = gme_play(gmeCxt->emu, frameCount * SAMPLES_PER_FRAME, samples);
 
   return (status == NULL);
 }

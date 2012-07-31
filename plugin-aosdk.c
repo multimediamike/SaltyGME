@@ -37,7 +37,6 @@ int ao_get_lib(char *pfilename, uint8 **ppbuffer, uint64 *plength)
   unsigned char *data = currentAosdkContext->dataBuffer;
   unsigned char *dataCopy = NULL;
 
-printf("%s:%s:%d: loading file '%s'\n", __FILE__, __func__, __LINE__, pfilename);
   offset = 20;
   for (i = 0; i < currentAosdkContext->trackCount; i++)
   {
@@ -143,7 +142,6 @@ static int AosdkStartTrack(void *privateData, int trackNumber,
 
   if (trackNumber == -1)
     trackNumber = cxt->currentTrack;
-printf("%s:%s:%d: track = %d\n", __FILE__, __func__, __LINE__, trackNumber);
 
   offset = 20 + (trackNumber * INDEX_RECORD_SIZE);
   fileIndex =
@@ -198,7 +196,7 @@ static int AosdkGenerateStereoFrames(void *privateData, int16_t *samples,
 {
   int status;
 
-  status = genFunc(samples, frameCount / 2);
+  status = genFunc(samples, frameCount);
 
   return (status == AO_SUCCESS);
 }

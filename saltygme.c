@@ -53,7 +53,13 @@ static struct PPB_Var* g_var_if = NULL;
 #define MAX_RESULT_STR_LEN 100
 #define BUFFER_INCREMENT (1024 * 1024 * 10)
 #define CHANNELS 2
+#define SAMPLES_PER_FRAME 2
+#define BYTES_PER_SAMPLE 2
+#define BYTES_PER_FRAME 4
 #define BUFFER_SIZE (MASTER_FREQUENCY * CHANNELS)
+#define BUFFER_SIZE_IN_FRAMES MASTER_FREQUENCY
+#define PRE_BUFFER_FRAMES (MASTER_FREQUENCY / 2)
+#define FRAME_COUNT 4096
 
 #define CONTAINER_STRING "Game Music Files"
 #define CONTAINER_STRING_SIZE 16
@@ -121,6 +127,7 @@ typedef struct
   int dataBufferPtr;
   PP_Resource audioConfig;
   PP_Resource audioHandle;
+  int frameCount;
   int sampleCount;
   int startPlaying;  /* indicates if the timer callback should start audio */
   int isPlaying;     /* indicates whether playback is currently occurring */
@@ -135,7 +142,7 @@ typedef struct
   PP_Resource graphics2d;
   PP_Resource oscopeData;
   uint64_t msToUpdateVideo;
-  int frameCounter;
+  int vizFrameCounter;
   uint8_t r, g, b;
   int rInc, gInc, bInc;
   int vizEnabled;
@@ -244,30 +251,30 @@ static void AudioCallback(void* samples, uint32_t reqLenInBytes, void* user_data
     return;
   }
 
-  bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE) * 2;
-  bufferEndInBytes = (cxt->audioEnd % BUFFER_SIZE ) * 2;
+  bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE_IN_FRAMES) * BYTES_PER_FRAME;
+  bufferEndInBytes = (cxt->audioEnd % BUFFER_SIZE_IN_FRAMES) * BYTES_PER_FRAME;
 
   /* decide how much to feed */
   if (bufferStartInBytes > bufferEndInBytes)
-    actualLen = BUFFER_SIZE * 2 - bufferStartInBytes;
+    actualLen = BUFFER_SIZE_IN_FRAMES * BYTES_PER_FRAME - bufferStartInBytes;
   else
     actualLen = bufferEndInBytes - bufferStartInBytes;
   if (actualLen > reqLenInBytes)
     actualLen = reqLenInBytes;
 
   /* feed it */
-  memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / 2], actualLen);
-  cxt->audioStart += actualLen / 2;
+  memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / BYTES_PER_SAMPLE], actualLen);
+  cxt->audioStart += actualLen / BYTES_PER_FRAME;
 
   /* wrap-around case */
   if (actualLen < reqLenInBytes)
   {
     samples += actualLen;
     actualLen = reqLenInBytes - actualLen;
-    bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE) * 2;
+    bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE_IN_FRAMES) * BYTES_PER_FRAME;
     /* feed it */
-    memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / 2], actualLen);
-    cxt->audioStart += actualLen / 2;
+    memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / BYTES_PER_SAMPLE], actualLen);
+    cxt->audioStart += actualLen / BYTES_PER_FRAME;
   }
 
   pthread_mutex_unlock(&cxt->audioMutex);
@@ -399,11 +406,14 @@ static void TimerCallback(void* user_data, int32_t result)
   uint32_t pixel;
   struct PP_Point topLeft;
   short *vizBuffer;
-  int samplesToGenerate;
+  int framesToGenerate;
+  int framesPreWrap;
+  int framesPostWrap;
   unsigned char progressShade;
   unsigned char textShade;
   struct PP_Var var_result;
   char result_string[MAX_RESULT_STR_LEN];
+  int bufferFrames;
 
   if (!cxt->isLoaded && GetMillisecondsCount(cxt) >= (1000 / FRAME_RATE))
   {
@@ -421,7 +431,7 @@ static void TimerCallback(void* user_data, int32_t result)
     if (cxt->startPlaying)
     {
       ResetMillisecondsCount(cxt);
-      cxt->frameCounter = 0;
+      cxt->vizFrameCounter = 0;
       cxt->msToUpdateVideo = 0;  /* update video at relative MS tick 0 */
       cxt->isPlaying = 1;
 
@@ -429,39 +439,42 @@ static void TimerCallback(void* user_data, int32_t result)
       cxt->audioStart = 0;
       cxt->audioEnd = 0;
       pthread_mutex_unlock(&cxt->audioMutex);
+
+      bufferFrames = PRE_BUFFER_FRAMES;
     }
+    else
+      bufferFrames = FRAME_COUNT;
 
     /* check if it's time to generate more audio */
     pthread_mutex_lock(&cxt->audioMutex);
-    if ((cxt->audioEnd - cxt->audioStart) < (cxt->sampleCount / 2))
+    if ((cxt->audioEnd - cxt->audioStart) < bufferFrames)
     {
-      if (((cxt->audioEnd + cxt->sampleCount) % BUFFER_SIZE) < (cxt->audioStart % BUFFER_SIZE))
+      framesToGenerate = bufferFrames - (cxt->audioEnd - cxt->audioStart);
+      if ((cxt->audioEnd % BUFFER_SIZE_IN_FRAMES) + framesToGenerate > BUFFER_SIZE_IN_FRAMES)
       {
         /* this case handles wraparound in the audio buffer */
+        framesPreWrap = BUFFER_SIZE_IN_FRAMES - (cxt->audioEnd % BUFFER_SIZE_IN_FRAMES);
+        framesPostWrap = framesToGenerate - framesPreWrap;
 
         /* before the wraparound */
-        samplesToGenerate = BUFFER_SIZE - (cxt->audioEnd % BUFFER_SIZE);
         cxt->playerPlugin->generateStereoFrames(cxt->pluginContext,
-          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE],
-          samplesToGenerate);
-        cxt->audioEnd += samplesToGenerate;
+          &cxt->audioBuffer[(cxt->audioEnd % BUFFER_SIZE_IN_FRAMES) * SAMPLES_PER_FRAME],
+          framesPreWrap);
 
         /* after the wraparound */
-        samplesToGenerate = cxt->sampleCount - samplesToGenerate;
         cxt->playerPlugin->generateStereoFrames(cxt->pluginContext,
-          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE],
-          samplesToGenerate);
-        cxt->audioEnd += samplesToGenerate;
+          &cxt->audioBuffer[0],
+          framesPostWrap);
       }
       else
       {
         /* simple, non-wraparound case */
         cxt->playerPlugin->generateStereoFrames(cxt->pluginContext,
-          &cxt->audioBuffer[cxt->audioEnd % BUFFER_SIZE],
-          cxt->sampleCount);
-        cxt->audioEnd += cxt->sampleCount;
+          &cxt->audioBuffer[(cxt->audioEnd % BUFFER_SIZE_IN_FRAMES) * SAMPLES_PER_FRAME],
+          framesToGenerate);
       }
-      cxt->frameCountForCurrentTrack += cxt->sampleCount / 2;
+      cxt->audioEnd = cxt->audioStart + bufferFrames;
+      cxt->frameCountForCurrentTrack += framesToGenerate;
     }
     pthread_mutex_unlock(&cxt->audioMutex);
 
@@ -500,7 +513,7 @@ static void TimerCallback(void* user_data, int32_t result)
         /* the fade-out effect takes care of clearing the frame when active */
         if (!cxt->fadeOutFrames)
           ClearFrame(pixels);
-        vizBuffer = &cxt->audioBuffer[(cxt->frameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
+        vizBuffer = &cxt->audioBuffer[(cxt->vizFrameCounter % FRAME_RATE) * BUFFER_SIZE / FRAME_RATE];
         cxt->r += cxt->rInc;
         if (cxt->r < 64 || cxt->r > 250)
           cxt->rInc *= -1;
@@ -536,7 +549,7 @@ static void TimerCallback(void* user_data, int32_t result)
         cxt->disableViz = 0;  /* clear the signal */
       }
 
-      cxt->msToUpdateVideo = ++cxt->frameCounter * 1000 / FRAME_RATE;
+      cxt->msToUpdateVideo = ++cxt->vizFrameCounter * 1000 / FRAME_RATE;
       cxt->secondCounter--;
     }
   }
@@ -765,9 +778,9 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
     return PP_FALSE;
 
   /* prepare audio interface */
-  cxt->sampleCount = g_audioconfig_if->RecommendSampleFrameCount(MASTER_FREQUENCY, 4096);
-  cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, MASTER_FREQUENCY, cxt->sampleCount);
-  cxt->sampleCount *= 2;
+  cxt->frameCount = g_audioconfig_if->RecommendSampleFrameCount(MASTER_FREQUENCY, FRAME_COUNT);
+  cxt->sampleCount = cxt->frameCount * SAMPLES_PER_FRAME;
+  cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, MASTER_FREQUENCY, cxt->frameCount);
 
   if (!cxt->audioConfig)
     return PP_FALSE;
