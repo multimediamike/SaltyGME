@@ -22,7 +22,7 @@ typedef struct
 typedef int32(*aosdk_start_func)(uint8*, uint32);
 typedef int32(*aosdk_gen_func)(int16*, uint32);
 
-/* obviously not thread-sade */
+/* obviously not thread-safe */
 static aosdkContext *currentAosdkContext;
 
 int ao_get_lib(char *pfilename, uint8 **ppbuffer, uint64 *plength)
