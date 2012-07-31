@@ -19,7 +19,7 @@ typedef struct
   int initialized;
 } twosfContext;
 
-/* obviously not thread-sade */
+/* obviously not thread-safe */
 static twosfContext *currentTwosfContext;
 
 static const char *channelStrings[NDS_VOICE_COUNT] = {
