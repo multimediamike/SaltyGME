@@ -35,17 +35,17 @@
 #include "loading-song.xbm"
 
 static PP_Module module_id = 0;
-static struct PPB_Audio *g_audio_if = NULL;
-static struct PPB_AudioConfig *g_audioconfig_if = NULL;
-static struct PPB_Core *g_core_if = NULL;
-static struct PPB_Graphics2D *g_graphics2d_if = NULL;
-static struct PPB_ImageData *g_imagedata_if = NULL;
-static struct PPB_Instance *g_instance_if = NULL;
-static struct PPB_Messaging *g_messaging_if = NULL;
-static struct PPB_URLLoader *g_urlloader_if = NULL;
-static struct PPB_URLRequestInfo *g_urlrequestinfo_if = NULL;
-static struct PPB_URLResponseInfo* g_urlresponseinfo_if = NULL;
-static struct PPB_Var* g_var_if = NULL;
+static PPB_Audio *g_audio_if = NULL;
+static PPB_AudioConfig *g_audioconfig_if = NULL;
+static PPB_Core *g_core_if = NULL;
+static PPB_Graphics2D *g_graphics2d_if = NULL;
+static PPB_ImageData *g_imagedata_if = NULL;
+static PPB_Instance *g_instance_if = NULL;
+static PPB_Messaging *g_messaging_if = NULL;
+static PPB_URLLoader *g_urlloader_if = NULL;
+static PPB_URLRequestInfo *g_urlrequestinfo_if = NULL;
+static PPB_URLResponseInfo* g_urlresponseinfo_if = NULL;
+static PPB_Var* g_var_if = NULL;
 
 #define FRAME_RATE 30
 #define OSCOPE_WIDTH  512
@@ -313,7 +313,7 @@ static char* AllocateCStrFromVar(struct PP_Var var) {
  */
 static struct PP_Var AllocateVarFromCStr(const char* str) {
   if (g_var_if != NULL)
-    return g_var_if->VarFromUtf8(module_id, str, strlen(str));
+    return g_var_if->VarFromUtf8(str, strlen(str));
   return PP_MakeUndefined();
 }
 
@@ -778,7 +778,7 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
     return PP_FALSE;
 
   /* prepare audio interface */
-  cxt->frameCount = g_audioconfig_if->RecommendSampleFrameCount(MASTER_FREQUENCY, FRAME_COUNT);
+  cxt->frameCount = g_audioconfig_if->RecommendSampleFrameCount(instance, MASTER_FREQUENCY, FRAME_COUNT);
   cxt->sampleCount = cxt->frameCount * SAMPLES_PER_FRAME;
   cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, MASTER_FREQUENCY, cxt->frameCount);
 
@@ -961,35 +961,35 @@ void Messaging_HandleMessage(PP_Instance instance, struct PP_Var var_message)
 PP_EXPORT int32_t PPP_InitializeModule(PP_Module a_module_id,
                                        PPB_GetInterface get_browser_interface) {
   module_id = a_module_id;
-  g_var_if = (struct PPB_Var*)(get_browser_interface(PPB_VAR_INTERFACE));
+  g_var_if = (PPB_Var*)(get_browser_interface(PPB_VAR_INTERFACE));
 
   /* load all the modules that will be required */
   g_audio_if =
-      (struct PPB_Audio*)(get_browser_interface(PPB_AUDIO_INTERFACE));
+      (PPB_Audio*)(get_browser_interface(PPB_AUDIO_INTERFACE));
   g_audioconfig_if =
-      (struct PPB_AudioConfig*)(get_browser_interface(PPB_AUDIO_CONFIG_INTERFACE));
+      (PPB_AudioConfig*)(get_browser_interface(PPB_AUDIO_CONFIG_INTERFACE));
   g_core_if =
-      (struct PPB_Core*)(get_browser_interface(PPB_CORE_INTERFACE));
+      (PPB_Core*)(get_browser_interface(PPB_CORE_INTERFACE));
   g_graphics2d_if =
-      (struct PPB_Graphics2D*)(get_browser_interface(PPB_GRAPHICS_2D_INTERFACE));
+      (PPB_Graphics2D*)(get_browser_interface(PPB_GRAPHICS_2D_INTERFACE));
   g_imagedata_if =
-      (struct PPB_ImageData*)(get_browser_interface(PPB_IMAGEDATA_INTERFACE));
+      (PPB_ImageData*)(get_browser_interface(PPB_IMAGEDATA_INTERFACE));
   g_instance_if =
-      (struct PPB_Instance*)(get_browser_interface(PPB_INSTANCE_INTERFACE));
+      (PPB_Instance*)(get_browser_interface(PPB_INSTANCE_INTERFACE));
   g_messaging_if =
-      (struct PPB_Messaging*)(get_browser_interface(PPB_MESSAGING_INTERFACE));
+      (PPB_Messaging*)(get_browser_interface(PPB_MESSAGING_INTERFACE));
   g_urlloader_if =
-      (struct PPB_URLLoader*)(get_browser_interface(PPB_URLLOADER_INTERFACE));
+      (PPB_URLLoader*)(get_browser_interface(PPB_URLLOADER_INTERFACE));
   g_urlrequestinfo_if =
-      (struct PPB_URLRequestInfo*)(get_browser_interface(PPB_URLREQUESTINFO_INTERFACE));
+      (PPB_URLRequestInfo*)(get_browser_interface(PPB_URLREQUESTINFO_INTERFACE));
   g_urlresponseinfo_if =
-      (struct PPB_URLResponseInfo*)(get_browser_interface(PPB_URLRESPONSEINFO_INTERFACE));
+      (PPB_URLResponseInfo*)(get_browser_interface(PPB_URLRESPONSEINFO_INTERFACE));
   return PP_OK;
 }
 
 PP_EXPORT const void* PPP_GetInterface(const char* interface_name) {
   if (strcmp(interface_name, PPP_INSTANCE_INTERFACE) == 0) {
-    static struct PPP_Instance instance_interface = {
+    static PPP_Instance instance_interface = {
       &Instance_DidCreate,
       &Instance_DidDestroy,
       &Instance_DidChangeView,
@@ -998,7 +998,7 @@ PP_EXPORT const void* PPP_GetInterface(const char* interface_name) {
     };
     return &instance_interface;
   } else if (strcmp(interface_name, PPP_MESSAGING_INTERFACE) == 0) {
-    static struct PPP_Messaging g_messaging_if = {
+    static PPP_Messaging g_messaging_if = {
       &Messaging_HandleMessage
     };
     return &g_messaging_if;
