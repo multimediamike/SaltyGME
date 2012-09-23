@@ -241,6 +241,7 @@ static void AudioCallback(void* samples, uint32_t reqLenInBytes, void* user_data
   SaltyGmeContext *cxt = (SaltyGmeContext*)user_data;
   int bufferStartInBytes, bufferEndInBytes;
   int actualLen;
+  unsigned char *byteSamplePtr = (unsigned char*)samples;
 
   pthread_mutex_lock(&cxt->audioMutex);
 
@@ -263,17 +264,17 @@ static void AudioCallback(void* samples, uint32_t reqLenInBytes, void* user_data
     actualLen = reqLenInBytes;
 
   /* feed it */
-  memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / BYTES_PER_SAMPLE], actualLen);
+  memcpy(byteSamplePtr, &cxt->audioBuffer[bufferStartInBytes / BYTES_PER_SAMPLE], actualLen);
   cxt->audioStart += actualLen / BYTES_PER_FRAME;
 
   /* wrap-around case */
   if (actualLen < reqLenInBytes)
   {
-    samples += actualLen;
+    byteSamplePtr += actualLen;
     actualLen = reqLenInBytes - actualLen;
     bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE_IN_FRAMES) * BYTES_PER_FRAME;
     /* feed it */
-    memcpy(samples, &cxt->audioBuffer[bufferStartInBytes / BYTES_PER_SAMPLE], actualLen);
+    memcpy(byteSamplePtr, &cxt->audioBuffer[bufferStartInBytes / BYTES_PER_SAMPLE], actualLen);
     cxt->audioStart += actualLen / BYTES_PER_FRAME;
   }
 
@@ -814,8 +815,7 @@ static void Instance_DidDestroy(PP_Instance instance) {
 }
 
 static void Instance_DidChangeView(PP_Instance instance,
-                                   const struct PP_Rect* position,
-                                   const struct PP_Rect* clip) {
+                                   PP_Resource view) {
 }
 
 static void Instance_DidChangeFocus(PP_Instance instance,
