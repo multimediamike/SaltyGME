@@ -12,7 +12,7 @@ website for a searchable database of video game music.
 
 # Development
 Set up the Native Client development environment per the instructions at
-[Google's website for NaCl developments](https://developers.google.com/native-client/).
+[Google's website for NaCl development](https://developers.google.com/native-client/).
 Presently, the player supports version 19 of the Pepper API.
 
 After installing the NaCl development environment, build the player with:
