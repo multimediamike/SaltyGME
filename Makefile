@@ -63,7 +63,6 @@ CXX_SOURCES:=gme-source/Ay_Apu.cpp \
 	gme-source/Ym2413_Emu.cpp \
 	gme-source/Ym2612_Emu.cpp
 
-#saltygme.c 
 C_SOURCES:= saltygme.c \
 	plugin-libgme.c \
 	plugin-vio2sf.c \
