@@ -10,7 +10,6 @@ typedef int (*InitPluginFunc)(void *context, uint8_t *data, int size);
 /* start, play, and stop */
 typedef int (*StartTrackFunc)(void *context, int trackNumber);
 typedef int (*GenerateStereoFramesFunc)(void *context, int16_t *samples, int frameCount);
-typedef int (*StopTrackFunc)(void *context);
 
 /* track management */
 typedef int (*GetTrackCountFunc)(void *context);
