@@ -746,8 +746,6 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
     return PP_FALSE;
   cxt = GetContext(instance);
 
-  init_xz();
-
   cxt->playerPlugin = NULL;
   for (i = 0; i < argc; i++)
   {

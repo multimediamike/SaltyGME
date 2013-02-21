@@ -3,20 +3,22 @@
 
 #define BUFFER_INCREMENT (1024 * 1024 * 10)
 
-void init_xz()
-{
-  xz_crc32_init();
-}
-
 int xz_decompress(unsigned char *encoded, int encoded_size,
   unsigned char **decoded, int *decoded_size)
 {
+  static int xz_initialized = 0;
   enum xz_ret ret;
   struct xz_dec *xz;
   struct xz_buf buf;
   unsigned char *dec_buffer;
   unsigned char *temp;
   int dec_size;
+
+  if (!xz_initialized)
+  {
+    xz_crc32_init();
+    xz_initialized = 1;
+  }
 
   *decoded = NULL;
   *decoded_size = 0;
