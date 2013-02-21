@@ -19,6 +19,15 @@ After installing the NaCl development environment, build the player with:
 
 NACL_SDK_ROOT=/path/to/nacl_sdk/pepper_23 make
 
+There is also a testbench command line program that uses the same infrastructure
+as the NaCl module, but is easier to debug between Linux, printf and gdb. The
+program currently only runs on Linux because it outputs audio using Linux's
+PulseAudio API. To compile this program:
+
+make -f Makefile.linux-pulse
+
+This will create the executable 'pulse-testbench'.
+
 # Credits
 Mike Melanson (mike -at- multimedia.cx) wrote the SaltyGME player.
 
