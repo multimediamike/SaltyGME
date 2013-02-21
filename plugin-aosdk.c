@@ -114,10 +114,9 @@ static int AosdkInitPlugin(void *privateData, uint8_t *data, int size)
   cxt->trackCount = 0;
   cxt->currentTrack = 0;
 
-printf("%s:%s:%d\n", __FILE__, __func__, __LINE__);
   /* check for special container format */
   if (cxt->dataBufferSize < CONTAINER_STRING_SIZE ||
-    strncmp((char*)cxt->dataBuffer, CONTAINER_STRING, CONTAINER_STRING_SIZE) == 1)
+    strncmp((char*)cxt->dataBuffer, CONTAINER_STRING, CONTAINER_STRING_SIZE) != 0)
     cxt->initialized = 0;
   else
   {
