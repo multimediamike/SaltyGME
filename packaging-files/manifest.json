@@ -1,0 +1,24 @@
+{
+   "name": "Salty Game Music Player",
+   "description": "Interact with classic video game music",
+   "icons": {
+      "128": "salty-gmp-icon-128x128.png"
+   },
+   "minimum_chrome_version": "23",
+   "version": "1.3.0.0",
+   "manifest_version": 2,
+   "nacl_modules": [{
+       "path": "saltygme.nmf",
+       "mime_type": "audio/x-gamemusic-xz"
+   }],
+   "web_accessible_resources": [
+       "saltygme.nmf",
+       "saltygme_x86_32.nexe",
+       "saltygme_x86_64.nexe"
+   ],
+   "content_scripts": [{
+       "matches": ["http://gamemusic.multimedia.cx/*"],
+       "js": ["saltygme-content-script.js"],
+       "run_at": "document_end"
+   }]
+}
