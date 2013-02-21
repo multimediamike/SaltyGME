@@ -181,3 +181,7 @@ $(PROJECT)_x86_64.nexe : $(x86_64_CXX_OBJS) $(x86_64_C_OBJS)
 .PHONY: RUN 
 RUN: all
 	python ../httpd.py
+
+clean:
+	rm -f $(PROJECT)_x86_32.nexe $(x86_32_C_OBJS) $(x86_32_CXX_OBJS)
+	rm -f $(PROJECT)_x86_64.nexe $(x86_64_C_OBJS) $(x86_64_CXX_OBJS)
