@@ -13,11 +13,11 @@ website for a searchable database of video game music.
 # Development
 Set up the Native Client development environment per the instructions at
 [Google's website for NaCl development](https://developers.google.com/native-client/).
-Presently, the player supports version 19 of the Pepper API.
+Presently, the player supports version 23 of the Pepper API.
 
 After installing the NaCl development environment, build the player with:
 
-NACL_SDK_ROOT=/path/to/nacl_sdk/pepper_19 make
+NACL_SDK_ROOT=/path/to/nacl_sdk/pepper_23 make
 
 # Credits
 Mike Melanson (mike -at- multimedia.cx) wrote the SaltyGME player.
