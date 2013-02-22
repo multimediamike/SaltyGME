@@ -28,9 +28,6 @@ int main(int argc, char *argv[])
   int track_count;
   int requested_track;
 
-  /* initialize the Embedded XZ library, in case it's needed */
-  init_xz();
-
   /* process rigid command line options */
   if (argc < 4)
   {
@@ -95,7 +92,7 @@ int main(int argc, char *argv[])
   }
   fclose(f);
 
-  printf("data is %d bytes large\n", data_size);
+  printf("data is %ld bytes large\n", data_size);
 
   /* initialize player */
   context = (unsigned char *)malloc(playerPlugin->contextSize);
