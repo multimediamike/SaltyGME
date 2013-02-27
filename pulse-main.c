@@ -16,7 +16,7 @@ extern pluginInfo pluginAosdkSSF;
 
 int main(int argc, char *argv[])
 {
-  pluginInfo *playerPlugin;
+  pluginInfo *playerPlugin = NULL;
   FILE *f;
   unsigned char *data;
   size_t data_size;
@@ -66,6 +66,11 @@ int main(int argc, char *argv[])
     default:
       printf("invalid engine number: %d\n", atoi(argv[1]));
       break;
+  }
+  if (!playerPlugin)
+  {
+    printf("could not select a valid engine\n");
+    return 1;
   }
 
   /* load song data */
