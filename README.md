@@ -13,11 +13,11 @@ website for a searchable database of video game music.
 # Development
 Set up the Native Client development environment per the instructions at
 [Google's website for NaCl development](https://developers.google.com/native-client/).
-Presently, the player supports version 23 of the Pepper API.
+Presently, the player supports version 25 of the Pepper API.
 
 After installing the NaCl development environment, build the player with:
 
-NACL_SDK_ROOT=/path/to/nacl_sdk/pepper_23 make
+NACL_SDK_ROOT=/path/to/nacl_sdk/pepper_25 make
 
 There is also a testbench command line program that uses the same infrastructure
 as the NaCl module, but is easier to debug between Linux, printf and gdb. The
