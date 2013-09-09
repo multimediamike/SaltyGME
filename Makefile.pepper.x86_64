@@ -1,0 +1,175 @@
+TARGET=packaging-files/saltygme_x86_64.nexe
+.DEFAULT_GOAL=packaging-files/saltygme_x86_64.nexe
+
+CC:=ccache $(NACL_SDK_ROOT)/toolchain/linux_x86_newlib/bin/x86_64-nacl-gcc
+CXX:=ccache $(NACL_SDK_ROOT)/toolchain/linux_x86_newlib/bin/x86_64-nacl-g++
+AR:=$(NACL_SDK_ROOT)/toolchain/linux_x86_newlib/bin/x86_64-nacl-ar
+
+GLOBAL_FLAGS=-Wall -Wno-long-long -MMD
+
+INC_PATHS:=-Iaosdk
+INC_PATHS+=-Igme-source
+INC_PATHS+=-Ivio2sf
+INC_PATHS+=-Ixz-embedded
+INC_PATHS+=-Izlib
+INC_PATHS+=-I$(NACL_SDK_ROOT)/include
+
+LIBS:=libxzdec_64.a libvio2sf_64.a libaosdk_64.a libz_64.a libgme_64.a 
+MAIN_LDFLAGS:=-lpthread -lppapi -lxzdec_64 -lvio2sf_64 -laosdk_64 -lz_64 -lgme_64 -L.
+
+# build the core
+MAIN_C_SOURCES:=saltygme.c \
+	plugin-libgme.c \
+	plugin-vio2sf.c \
+	plugin-aosdk.c \
+	xzdec.c
+MAIN_CFLAGS:=$(GLOBAL_FLAGS) $(INC_PATHS)
+MAIN_C_OBJECTS:=$(patsubst %.c,%.64.o,$(MAIN_C_SOURCES))
+$(MAIN_C_OBJECTS) : %.64.o : %.c
+	$(CC) -o $@ -c $< $(MAIN_CFLAGS)
+
+$(TARGET): $(MAIN_C_OBJECTS) $(MAIN_CXX_OBJECTS) $(LIBS)
+	$(CXX) -o $(TARGET) $(MAIN_C_OBJECTS) $(MAIN_CXX_OBJECTS) $(MAIN_CFLAGS) $(MAIN_LDFLAGS)
+
+# build the XZ decoder
+XZ_LIB_TARGET:=libxzdec_64.a
+XZ_C_SOURCES:=xz-embedded/xz_crc32.c \
+	xz-embedded/xz_dec_lzma2.c \
+	xz-embedded/xz_dec_stream.c
+XZ_CFLAGS:=$(GLOBAL_FLAGS)
+XZ_C_OBJECTS:=$(patsubst %.c,%.64.o,$(XZ_C_SOURCES))
+$(XZ_C_OBJECTS) : %.64.o : %.c
+	$(CC) -o $@ -c $< $(XZ_CFLAGS)
+$(XZ_LIB_TARGET): $(XZ_C_OBJECTS)
+	$(AR) r $@ $^
+
+# build the Vio2sf engine
+VIO2SF_LIB_TARGET:=libvio2sf_64.a
+VIO2SF_C_SOURCES:=vio2sf/corlett.c \
+	vio2sf/vio2sf.c \
+	vio2sf/desmume/MMU.c \
+	vio2sf/desmume/mc.c \
+	vio2sf/desmume/thumb_instructions.c \
+	vio2sf/desmume/cp15.c \
+	vio2sf/desmume/FIFO.c \
+	vio2sf/desmume/arm_instructions.c \
+	vio2sf/desmume/GPU.c \
+	vio2sf/desmume/SPU.c \
+	vio2sf/desmume/armcpu.c \
+	vio2sf/desmume/bios.c \
+	vio2sf/desmume/matrix.c \
+	vio2sf/desmume/NDSSystem.c
+VIO2SF_CFLAGS:=$(GLOBAL_FLAGS) -Izlib
+VIO2SF_C_OBJECTS:=$(patsubst %.c,%.64.o,$(VIO2SF_C_SOURCES))
+$(VIO2SF_C_OBJECTS) : %.64.o : %.c
+	$(CC) -o $@ -c $< $(VIO2SF_CFLAGS)
+$(VIO2SF_LIB_TARGET): $(VIO2SF_C_OBJECTS)
+	$(AR) r $@ $^
+
+# build the AOSDK engine
+AOSDK_LIB_TARGET:=libaosdk_64.a
+AOSDK_C_SOURCES:=aosdk/corlett.c \
+	aosdk/eng_dsf/eng_dsf.c \
+	aosdk/eng_dsf/dc_hw.c \
+	aosdk/eng_dsf/arm7.c \
+	aosdk/eng_dsf/arm7i.c \
+	aosdk/eng_dsf/aica.c \
+	aosdk/eng_dsf/aicadsp.c \
+	aosdk/eng_ssf/scspdsp.c \
+	aosdk/eng_ssf/m68kopnz.c \
+	aosdk/eng_ssf/m68kcpu.c \
+	aosdk/eng_ssf/scsp.c \
+	aosdk/eng_ssf/sat_hw.c \
+	aosdk/eng_ssf/m68kops.c \
+	aosdk/eng_ssf/m68kopac.c \
+	aosdk/eng_ssf/eng_ssf.c \
+	aosdk/eng_ssf/m68kopdm.c \
+	aosdk/eng_psf/psx.c \
+	aosdk/eng_psf/eng_psf2.c \
+	aosdk/eng_psf/eng_psf.c \
+	aosdk/eng_psf/eng_spu.c \
+	aosdk/eng_psf/psx_hw.c \
+	aosdk/eng_psf/peops2/spu.c \
+	aosdk/eng_psf/peops2/dma.c \
+	aosdk/eng_psf/peops2/registers.c \
+	aosdk/eng_psf/peops/spu.c
+AOSDK_CFLAGS:=$(GLOBAL_FLAGS) -Iaosdk -D__LITTLE_ENDIAN__ -Izlib
+AOSDK_C_OBJECTS:=$(patsubst %.c,%.64.o,$(AOSDK_C_SOURCES))
+$(AOSDK_C_OBJECTS) : %.64.o : %.c
+	$(CC) -o $@ -c $< $(AOSDK_CFLAGS)
+$(AOSDK_LIB_TARGET): $(AOSDK_C_OBJECTS)
+	$(AR) r $@ $^
+
+# build the zlib decoder
+ZLIB_LIB_TARGET:=libz_64.a
+ZLIB_C_SOURCES:=zlib/adler32.c \
+	zlib/crc32.c \
+	zlib/infback.c \
+	zlib/inffast.c \
+	zlib/inflate.c \
+	zlib/zutil.c \
+	zlib/inftrees.c \
+	zlib/uncompr.c
+ZLIB_CFLAGS:=$(GLOBAL_FLAGS)
+ZLIB_C_OBJECTS:=$(patsubst %.c,%.64.o,$(ZLIB_C_SOURCES))
+$(ZLIB_C_OBJECTS) : %.64.o : %.c
+	$(CC) -o $@ -c $< $(ZLIB_CFLAGS)
+$(ZLIB_LIB_TARGET): $(ZLIB_C_OBJECTS)
+	$(AR) r $@ $^
+
+# build the GME engine
+GME_LIB_TARGET:=libgme_64.a
+GME_CXX_SOURCES:=gme-source/Ay_Apu.cpp \
+        gme-source/Ay_Cpu.cpp \
+        gme-source/Ay_Emu.cpp \
+        gme-source/Blip_Buffer.cpp \
+        gme-source/Classic_Emu.cpp \
+        gme-source/Data_Reader.cpp \
+        gme-source/Dual_Resampler.cpp \
+        gme-source/Effects_Buffer.cpp \
+        gme-source/Fir_Resampler.cpp \
+        gme-source/Gb_Apu.cpp \
+        gme-source/Gb_Cpu.cpp \
+        gme-source/Gb_Oscs.cpp \
+        gme-source/Gbs_Emu.cpp \
+        gme-source/gme.cpp \
+        gme-source/Gme_File.cpp \
+        gme-source/Gym_Emu.cpp \
+        gme-source/Hes_Apu.cpp \
+        gme-source/Hes_Cpu.cpp \
+        gme-source/Hes_Emu.cpp \
+        gme-source/Kss_Cpu.cpp \
+        gme-source/Kss_Emu.cpp \
+        gme-source/Kss_Scc_Apu.cpp \
+        gme-source/M3u_Playlist.cpp \
+        gme-source/Multi_Buffer.cpp \
+        gme-source/Music_Emu.cpp \
+        gme-source/Nes_Apu.cpp \
+        gme-source/Nes_Cpu.cpp \
+        gme-source/Nes_Fme7_Apu.cpp \
+        gme-source/Nes_Namco_Apu.cpp \
+        gme-source/Nes_Oscs.cpp \
+        gme-source/Nes_Vrc6_Apu.cpp \
+        gme-source/Nsfe_Emu.cpp \
+        gme-source/Nsf_Emu.cpp \
+        gme-source/Sap_Apu.cpp \
+        gme-source/Sap_Cpu.cpp \
+        gme-source/Sap_Emu.cpp \
+        gme-source/Sms_Apu.cpp \
+        gme-source/Snes_Spc.cpp \
+        gme-source/Spc_Cpu.cpp \
+        gme-source/Spc_Dsp.cpp \
+        gme-source/Spc_Emu.cpp \
+        gme-source/Vgm_Emu.cpp \
+        gme-source/Vgm_Emu_Impl.cpp \
+        gme-source/Ym2413_Emu.cpp \
+        gme-source/Ym2612_Emu.cpp
+GME_CXX_CXXFLAGS:=$(GLOBAL_FLAGS)
+GME_CXX_OBJECTS:=$(patsubst %.cpp,%.64.o,$(GME_CXX_SOURCES))
+$(GME_CXX_OBJECTS) : %.64.o : %.cpp
+	$(CXX) -o $@ -c $< $(GME_CXXFLAGS)
+$(GME_LIB_TARGET): $(GME_CXX_OBJECTS)
+	$(AR) r $@ $^
+
+clean:
+	rm -f $(TARGET) $(LIBS) $(MAIN_C_OBJECTS) $(XZ_C_OBJECTS) $(VIO2SF_C_OBJECTS) $(AOSDK_C_OBJECTS) $(ZLIB_C_OBJECTS) $(GME_CXX_OBJECTS)
