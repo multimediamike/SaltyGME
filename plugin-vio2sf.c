@@ -195,27 +195,24 @@ static int TwosfPreviousTrack(void *privateData)
 
 static int TwosfGetVoiceCount(void *privateData)
 {
-  return NDS_VOICE_COUNT;
+  return 1;
 }
 
 static const char* TwosfGetVoiceName(void *privateData, int voiceNumber)
 {
-  if (voiceNumber >= 0 && voiceNumber < NDS_VOICE_COUNT)
-    return channelStrings[voiceNumber];
-  else
-    return NULL;
+  return "Vio2sf Engine";
 }
 
 static int TwosfVoicesCanBeToggled(void *privateData)
 {
-  return 1;
+  /* do not allow individual voices to be toggled; the voice model doesn't
+   * really support it properly */
+  return 0;
 }
 
 static int TwosfSetVoiceState(void *privateData, int voice, int enabled)
 {
-  xsf_enable_channel(voice, !enabled);
-
-  return 1;
+  return 0;
 }
 
 pluginInfo pluginVio2sf =
