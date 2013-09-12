@@ -128,7 +128,6 @@ typedef struct
   PP_Resource audioConfig;
   PP_Resource audioHandle;
   int frameCount;
-  int sampleCount;
   int startPlaying;  /* indicates if the timer callback should start audio */
   int isPlaying;     /* indicates whether playback is currently occurring */
   short audioBuffer[BUFFER_SIZE];
@@ -250,6 +249,12 @@ static void AudioCallback(void* samples, uint32_t reqLenInBytes, void* user_data
   {
     pthread_mutex_unlock(&cxt->audioMutex);
     return;
+  }
+
+  /* guard against overruns up front */
+  if ((cxt->audioEnd - cxt->audioStart) * BYTES_PER_FRAME < reqLenInBytes)
+  {
+    reqLenInBytes = (cxt->audioEnd - cxt->audioStart) * BYTES_PER_FRAME;
   }
 
   bufferStartInBytes = (cxt->audioStart % BUFFER_SIZE_IN_FRAMES) * BYTES_PER_FRAME;
@@ -444,7 +449,7 @@ static void TimerCallback(void* user_data, int32_t result)
       bufferFrames = PRE_BUFFER_FRAMES;
     }
     else
-      bufferFrames = FRAME_COUNT;
+      bufferFrames = cxt->frameCount;
 
     /* check if it's time to generate more audio */
     pthread_mutex_lock(&cxt->audioMutex);
@@ -778,7 +783,6 @@ static PP_Bool Instance_DidCreate(PP_Instance instance,
 
   /* prepare audio interface */
   cxt->frameCount = g_audioconfig_if->RecommendSampleFrameCount(instance, MASTER_FREQUENCY, FRAME_COUNT);
-  cxt->sampleCount = cxt->frameCount * SAMPLES_PER_FRAME;
   cxt->audioConfig = g_audioconfig_if->CreateStereo16Bit(instance, MASTER_FREQUENCY, cxt->frameCount);
 
   if (!cxt->audioConfig)
