@@ -1,3 +1,6 @@
+v1.4.0.0: September 11, 2013
+- fixed stuttering problem on Windows
+
 v1.2.0.0: August 1, 2012
 - fixed A/V sync
 
