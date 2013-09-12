@@ -1,3 +1,5 @@
 *.nexe
 *.o
+*.d
+*.a
 pulse-testbench
