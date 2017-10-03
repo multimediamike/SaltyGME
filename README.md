@@ -10,6 +10,8 @@ The NaCl player is [available as a Chrome browser extension](https://chrome.goog
 It works under Windows, Mac OS X, and Linux. [Visit the Game Music Appreciation](http://gamemusic.multimedia.cx/)
 website for a searchable database of video game music.
 
+**Note that SaltyGME should be considered deprecated. Visit [the cirrusretro-players repository](https://github.com/multimediamike/cirrusretro-players) ([and associated website](https://cirrusretro.com/)) for a chiptune playback solution that leverages pure JavaScript and thus enjoys broader browser support.**
+
 # Development
 Set up the Native Client development environment per the instructions at
 [Google's website for NaCl development](https://developers.google.com/native-client/).
